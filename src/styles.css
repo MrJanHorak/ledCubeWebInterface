@@ -167,34 +167,34 @@ input[type='number'] {
 .help-box h2 {
   margin-top: 0;
 
-/* help content columns */
-.help-content {
-  display: flex;
-  gap: 18px;
-}
-.help-left {
-  flex: 1;
-}
-.help-right {
-  width: 320px;
-}
-.help-media {
-  border: 1px dashed #dcdcdc;
-  border-radius: 8px;
-  padding: 12px;
-  background: #fbfbfb;
-}
-.media-placeholder {
-  height: 140px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #777;
-}
-.muted {
-  color: #666;
-  font-size: 13px;
-}
+  /* help content columns */
+  .help-content {
+    display: flex;
+    gap: 18px;
+  }
+  .help-left {
+    flex: 1;
+  }
+  .help-right {
+    width: 320px;
+  }
+  .help-media {
+    border: 1px dashed #dcdcdc;
+    border-radius: 8px;
+    padding: 12px;
+    background: #fbfbfb;
+  }
+  .media-placeholder {
+    height: 140px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #777;
+  }
+  .muted {
+    color: #666;
+    font-size: 13px;
+  }
 }
 .help-toggle {
   margin-left: 12px;

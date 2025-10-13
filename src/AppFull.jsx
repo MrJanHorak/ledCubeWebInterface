@@ -36,11 +36,15 @@ export default function AppFull() {
         e.target &&
         (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')
       )
-      // toggle help with H or ?
-      if(e.code==='KeyH' || e.key==='?'){ setShowHelp(s=>!s) }
+        if (e.code === 'KeyH' || e.key === '?') {
+          // toggle help with H or ?
+          setShowHelp((s) => !s);
+        }
       // close help with Escape
-      if(e.key==='Escape'){ setShowHelp(false) }
-        return;
+      if (e.key === 'Escape') {
+        setShowHelp(false);
+      }
+      return;
       if (e.code === 'Space') {
         e.preventDefault();
         setPlaying((p) => !p);

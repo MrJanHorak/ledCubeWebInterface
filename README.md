@@ -31,9 +31,9 @@ Overview — how to use
 - Playback: Use Play to preview your animation in the browser. Adjust the frame delay (ms).
 - Export: Export as a C array, copy/download a `.h` file, or generate a simple Arduino `.ino` sketch template.
 - Web Serial Upload: Connect to an Arduino-compatible device via the Web Serial API (Chrome/Edge). Click Connect, then Send — the app will ask for confirmation. The upload sequence is:
-	- Open command: 70 bytes of `0xAD` (start)
-	- For each frame: `0xF2` followed by 64 bytes (frame payload)
-	- Close command: 70 bytes of `0xED` (end)
+  - Open command: 70 bytes of `0xAD` (start)
+  - For each frame: `0xF2` followed by 64 bytes (frame payload)
+  - Close command: 70 bytes of `0xED` (end)
 
 Help overlay & shortcuts
 
@@ -56,7 +56,7 @@ Export format details
 const byte NAME[N][64] = { ... };
 ```
 
-- Frame mapping used by the exporter: index = 8*y + x and bits represent the vertical (z) layers.
+- Frame mapping used by the exporter: index = 8\*y + x and bits represent the vertical (z) layers.
 
 Arduino example
 
@@ -87,4 +87,3 @@ Where to put help assets
 License & disclaimers
 
 - This project is a personal/experimental tool — adapt and improve as needed. No warranties.
-
