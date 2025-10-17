@@ -27,6 +27,7 @@ npm test
 Overview — how to use
 
 - Grid editing: The main editor edits the current 8x8 layer (layers 0..7). Use the layer controls to pick a layer and click cells to toggle LED columns.
+- Grid editing: The main editor edits the current 8x8 layer. Layers are now presented as 1..8 (human-friendly). Use the layer controls to pick a layer and click cells to toggle LED columns. Note: "Layer 1" corresponds to the front face in the 3D preview; Layer 8 is the back.
 - Frames & Timeline: Add, duplicate, delete frames and build an animation using the timeline tiles. Click tiles to jump to a frame.
 - Playback: Use Play to preview your animation in the browser. Adjust the frame delay (ms).
 - Export: Export as a C array, copy/download a `.h` file, or generate a simple Arduino `.ino` sketch template.

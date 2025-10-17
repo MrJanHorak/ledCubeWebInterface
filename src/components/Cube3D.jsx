@@ -120,6 +120,56 @@ export default function Cube3D({
     }
     scene.add(group);
 
+    // Add a subtle translucent marker for the front face (UI Layer 1)
+    try {
+      // compute front Z position: y=7 is front -> z = (7 - 3.5) * size * 1.15
+      const frontZ = (7 - 3.5) * size * 1.15;
+      const planeSize = 8 * size * 1.15 + 0.2;
+      const planeGeo = new THREE.PlaneGeometry(planeSize, planeSize);
+      const planeMat = new THREE.MeshStandardMaterial({
+        color: 0x00d1ff,
+        transparent: true,
+        opacity: 0.06,
+        depthWrite: false,
+      });
+      const frontPlane = new THREE.Mesh(planeGeo, planeMat);
+      frontPlane.position.set(0, 0, frontZ + 0.02);
+      scene.add(frontPlane);
+
+      // create a simple canvas texture for a 'Front (Layer 1)' label
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'rgba(0,0,0,0)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.font = 'bold 36px sans-serif';
+      ctx.fillStyle = '#00d1ff';
+      ctx.textAlign = 'center';
+      ctx.fillText('Front (Layer 1)', canvas.width / 2, canvas.height / 2 + 12);
+      const tex = new THREE.CanvasTexture(canvas);
+      const spriteMat = new THREE.SpriteMaterial({
+        map: tex,
+        depthTest: false,
+      });
+      const sprite = new THREE.Sprite(spriteMat);
+      sprite.scale.set(6 * size, 1.2 * size, 1);
+      // position above the top edge of the plane
+      const topY = 3.5 * size * 1.15;
+      sprite.position.set(0, topY + 0.6, frontZ + 0.04);
+      scene.add(sprite);
+
+      // store for cleanup
+      frontPlane.userData._cleanup = () => {
+        planeGeo.dispose();
+        planeMat.dispose();
+      };
+      sprite.userData._cleanup = () => {
+        tex.dispose();
+        spriteMat.dispose();
+      };
+    } catch (e) {}
+
     // add a subtle grid and axis helper to help orientation
     try {
       const grid = new THREE.GridHelper(20, 10, 0x333333, 0x222222);
@@ -170,6 +220,33 @@ export default function Cube3D({
       } catch (e) {}
       try {
         renderer.dispose();
+      } catch (e) {}
+      try {
+        // attempt to dispose any custom resources attached to scene objects
+        if (scene && scene.traverse) {
+          scene.traverse((obj) => {
+            if (
+              obj &&
+              obj.userData &&
+              typeof obj.userData._cleanup === 'function'
+            ) {
+              try {
+                obj.userData._cleanup();
+              } catch (e) {}
+            }
+            // also try to dispose geometries/materials if present and not yet disposed
+            try {
+              if (obj.geometry && obj.geometry.dispose) obj.geometry.dispose();
+            } catch (e) {}
+            try {
+              if (obj.material) {
+                if (Array.isArray(obj.material))
+                  obj.material.forEach((m) => m.dispose && m.dispose());
+                else if (obj.material.dispose) obj.material.dispose();
+              }
+            } catch (e) {}
+          });
+        }
       } catch (e) {}
       try {
         if (
