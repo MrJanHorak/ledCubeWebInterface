@@ -72,8 +72,279 @@ export function generateHFile(name, frames) {
 }
 
 export function generateSketch(name, frames) {
-  const arr = framesToCArray(frames, name);
-  // sketch template using funPrintCube and demo of iterating frames
-  const sketch = `// Generated Arduino sketch for ${name}\n\n${arr}\n\nvoid setup(){\n  Serial.begin(38400);\n  delay(500);\n  // send open command\n  for(int i=0;i<70;i++) Serial.write(0xAD);\n  delay(200);\n}\n\nvoid loop(){\n  for(int f=0; f<${name}_FRAME_COUNT; f++) {\n    // send frame f\n    Serial.write(0xF2);\n    Serial.write(${name}[f], 64);\n    delay(200);\n  }\n  // keep looping\n}\n\n// Notes: integrate funPrintCube or adapt Serial.write usage to match your cube protocol.\n`;
+  // generate the C array text first
+  let arr = framesToCArray(frames, name);
+
+  // replace the array declaration to place it in flash (PROGMEM)
+  const header = `const byte ${name}[${frames.length}][64] = {`;
+  const headerProg = `const byte ${name}[${frames.length}][64] PROGMEM = {`;
+  arr = arr.replace(header, headerProg);
+
+  // sketch template using PROGMEM and pgm_read_byte
+  const sketch = `// Generated Arduino sketch for ${name}\n\n#include <Arduino.h>\n#include <avr/pgmspace.h>\n\n${arr}\n\n// send one frame stored in PROGMEM (framePtr points to 64 bytes)\nvoid sendFrameFromPROGMEM(const uint8_t *framePtr) {\n  Serial.write(0xF2);\n  for (int i = 0; i < 64; i++) {\n    uint8_t b = pgm_read_byte(framePtr + i);\n    Serial.write(b);\n  }\n}\n\nvoid setup(){\n  Serial.begin(38400);\n  delay(500);\n  // send open command\n  for(int i=0;i<70;i++) Serial.write(0xAD);\n  delay(200);\n}\n\nvoid loop(){\n  for (int f = 0; f < ${name}_FRAME_COUNT; f++) {\n    const uint8_t *framePtr = ${name}[f];\n    sendFrameFromPROGMEM(framePtr);\n    delay(200);\n  }\n  // keep looping\n}\n`;
+
   return sketch;
+}
+
+// Generate a receiver sketch that accepts frames over Serial with checksum/ACK
+export function generateStreamingReceiverSketch() {
+  const sketch = `// Streaming receiver sketch for LED Cube - receives frames over Serial\n\n#include <Arduino.h>\n\nconst uint8_t FRAME_MARKER = 0xF2;\nconst uint8_t ACK = 0xAA;\nconst uint8_t NACK = 0xFF;\n\n// Replace this with your cube display function.\nvoid displayFrame(const uint8_t *frame) {\n  // TODO: map 64-byte frame into your cube wiring and update outputs\n  // Example placeholder: blink onboard LED to indicate frame received\n  digitalWrite(LED_BUILTIN, HIGH);\n  delay(20);\n  digitalWrite(LED_BUILTIN, LOW);\n}\n\nvoid setup() {\n  Serial.begin(38400);\n  pinMode(LED_BUILTIN, OUTPUT);\n}\n\nvoid loop() {\n  if (Serial.available() <= 0) return;\n  int c = Serial.read();\n  if (c != FRAME_MARKER) return;\n\n  // read 64 bytes for frame\n  uint8_t buf[64];\n  unsigned long start = millis();\n  int got = 0;\n  while (got < 64 && (millis() - start) < 1000) {\n    if (Serial.available() > 0) {\n      int v = Serial.read();\n      if (v >= 0) buf[got++] = (uint8_t)v;\n    }
+  }
+  if (got < 64) {\n+    Serial.write(NACK);\n+    return;\n+  }\n+\n+  // read checksum\n+  start = millis();\n+  while (Serial.available() == 0 && (millis() - start) < 500) ;\n+  if (Serial.available() == 0) {\n+    Serial.write(NACK);\n+    return;\n+  }\n+  uint8_t checksum = (uint8_t)Serial.read();\n+\n+  uint8_t sum = 0;\n+  for (int i = 0; i < 64; i++) sum += buf[i];\n+  if (sum != checksum) {\n+    Serial.write(NACK);\n+    return;\n+  }\n+\n+  // valid frame - acknowledge and display\n+  Serial.write(ACK);\n+  displayFrame(buf);\n+}\n+`;
+
+  return sketch;
+}
+
+// ========== TEXT & GLYPH ANIMATION ==========
+
+// Simple 5x7 font (columns, LSB = top row)
+const FONT5x7 = {
+  ' ': [0x00, 0x00, 0x00, 0x00, 0x00],
+  A: [0x7c, 0x12, 0x11, 0x12, 0x7c],
+  B: [0x7f, 0x49, 0x49, 0x49, 0x36],
+  C: [0x3e, 0x41, 0x41, 0x41, 0x22],
+  D: [0x7f, 0x41, 0x41, 0x22, 0x1c],
+  E: [0x7f, 0x49, 0x49, 0x49, 0x41],
+  F: [0x7f, 0x09, 0x09, 0x09, 0x01],
+  G: [0x3e, 0x41, 0x49, 0x49, 0x7a],
+  H: [0x7f, 0x08, 0x08, 0x08, 0x7f],
+  I: [0x00, 0x41, 0x7f, 0x41, 0x00],
+  J: [0x20, 0x40, 0x41, 0x3f, 0x01],
+  K: [0x7f, 0x08, 0x14, 0x22, 0x41],
+  L: [0x7f, 0x40, 0x40, 0x40, 0x40],
+  M: [0x7f, 0x02, 0x04, 0x02, 0x7f],
+  N: [0x7f, 0x04, 0x08, 0x10, 0x7f],
+  O: [0x3e, 0x41, 0x41, 0x41, 0x3e],
+  P: [0x7f, 0x09, 0x09, 0x09, 0x06],
+  Q: [0x3e, 0x41, 0x51, 0x21, 0x5e],
+  R: [0x7f, 0x09, 0x19, 0x29, 0x46],
+  S: [0x46, 0x49, 0x49, 0x49, 0x31],
+  T: [0x01, 0x01, 0x7f, 0x01, 0x01],
+  U: [0x3f, 0x40, 0x40, 0x40, 0x3f],
+  V: [0x1f, 0x20, 0x40, 0x20, 0x1f],
+  W: [0x7f, 0x20, 0x18, 0x20, 0x7f],
+  X: [0x63, 0x14, 0x08, 0x14, 0x63],
+  Y: [0x03, 0x04, 0x78, 0x04, 0x03],
+  Z: [0x61, 0x51, 0x49, 0x45, 0x43],
+  0: [0x3e, 0x45, 0x49, 0x51, 0x3e],
+  1: [0x00, 0x21, 0x7f, 0x01, 0x00],
+  2: [0x23, 0x45, 0x49, 0x49, 0x31],
+  3: [0x22, 0x41, 0x49, 0x49, 0x36],
+  4: [0x0c, 0x14, 0x24, 0x7f, 0x04],
+  5: [0x72, 0x51, 0x51, 0x51, 0x4e],
+  6: [0x3e, 0x49, 0x49, 0x49, 0x26],
+  7: [0x40, 0x47, 0x48, 0x50, 0x60],
+  8: [0x36, 0x49, 0x49, 0x49, 0x36],
+  9: [0x32, 0x49, 0x49, 0x49, 0x3e],
+  '!': [0x00, 0x00, 0x5f, 0x00, 0x00],
+  '?': [0x20, 0x40, 0x4d, 0x50, 0x20],
+  '-': [0x08, 0x08, 0x08, 0x08, 0x08],
+  _: [0x40, 0x40, 0x40, 0x40, 0x40],
+  '.': [0x00, 0x60, 0x60, 0x00, 0x00],
+  ',': [0x00, 0x80, 0x60, 0x00, 0x00],
+  ':': [0x00, 0x36, 0x36, 0x00, 0x00],
+  ';': [0x00, 0x80, 0x36, 0x00, 0x00],
+  '+': [0x08, 0x08, 0x3e, 0x08, 0x08],
+  '=': [0x14, 0x14, 0x14, 0x14, 0x14],
+  '<': [0x08, 0x14, 0x22, 0x41, 0x00],
+  '>': [0x00, 0x41, 0x22, 0x14, 0x08],
+  '/': [0x60, 0x10, 0x08, 0x04, 0x03],
+  '\\': [0x03, 0x04, 0x08, 0x10, 0x60],
+  '(': [0x00, 0x1c, 0x22, 0x41, 0x00],
+  ')': [0x00, 0x41, 0x22, 0x1c, 0x00],
+  '[': [0x00, 0x7f, 0x41, 0x41, 0x00],
+  ']': [0x00, 0x41, 0x41, 0x7f, 0x00],
+  '{': [0x00, 0x08, 0x36, 0x41, 0x00],
+  '}': [0x00, 0x41, 0x36, 0x08, 0x00],
+  '*': [0x14, 0x08, 0x3e, 0x08, 0x14],
+  '#': [0x24, 0x7e, 0x24, 0x7e, 0x24],
+  '@': [0x3e, 0x41, 0x5d, 0x55, 0x5e],
+  '&': [0x36, 0x49, 0x55, 0x22, 0x50],
+  '%': [0x62, 0x64, 0x08, 0x13, 0x23],
+  $: [0x24, 0x2a, 0x7f, 0x2a, 0x12],
+  '^': [0x04, 0x02, 0x01, 0x02, 0x04],
+  '~': [0x02, 0x01, 0x02, 0x04, 0x02],
+  '`': [0x00, 0x01, 0x02, 0x00, 0x00],
+  "'": [0x00, 0x00, 0x07, 0x00, 0x00],
+  '"': [0x00, 0x07, 0x00, 0x07, 0x00],
+  '|': [0x00, 0x00, 0x7f, 0x00, 0x00],
+};
+
+// Helper: flip font column bits vertically (fix upside-down letters)
+function flipColumnVertical(col) {
+  let flipped = 0;
+  for (let z = 0; z < 7; z++) {
+    if ((col >> z) & 1) {
+      flipped |= 1 << (6 - z);
+    }
+  }
+  return flipped;
+}
+
+// Helper: set a column at a specific position on the cube
+// position goes from 0-31 for a 4-sided wrap (8 positions per side)
+// position 0-7: front face (y=7, x=0-7)
+// position 8-15: right face (x=7, y=7-0)
+// position 16-23: back face (y=0, x=7-0)
+// position 24-31: left face (x=0, y=0-7)
+function setColumnAtPosition(frame, col, position) {
+  const flippedCol = flipColumnVertical(col);
+
+  let mask = 0;
+  for (let z = 0; z < 7; z++) {
+    if ((flippedCol >> z) & 1) mask |= 1 << z;
+  }
+
+  if (position >= 0 && position < 8) {
+    // Front face: y=7, x=position
+    frame[8 * 7 + position] = mask;
+  } else if (position >= 8 && position < 16) {
+    // Right face: x=7, y=7-(position-8)
+    const y = 7 - (position - 8);
+    frame[8 * y + 7] = mask;
+  } else if (position >= 16 && position < 24) {
+    // Back face: y=0, x=7-(position-16)
+    const x = 7 - (position - 16);
+    frame[8 * 0 + x] = mask;
+  } else if (position >= 24 && position < 32) {
+    // Left face: x=0, y=position-24
+    const y = position - 24;
+    frame[8 * y + 0] = mask;
+  }
+}
+
+// Scroll text continuously around specified number of sides. Returns array of frames.
+// sides: number of sides (1-4) to use for scrolling
+// direction: 'ltr' (default) or 'rtl' (render columns for right-to-left preview)
+export function generateTextFrames(text = '', sides = 1, direction = 'ltr') {
+  const t = String(text || '').toUpperCase();
+  if (!t) return [];
+
+  // Build column buffer (in reverse order so it scrolls left-to-right correctly)
+  const cols = [];
+  if (direction === 'rtl') {
+    // build forward so it scrolls right-to-left visually
+    for (let i = 0; i < t.length; i++) {
+      const ch = t[i];
+      const glyph = FONT5x7[ch] || FONT5x7[' '];
+      cols.push(0x00);
+      for (let ci = 0; ci < glyph.length; ci++) {
+        cols.push(glyph[ci]);
+      }
+    }
+  } else {
+    // default: build reversed so scroll goes left-to-right on device
+    for (let i = t.length - 1; i >= 0; i--) {
+      const ch = t[i];
+      const glyph = FONT5x7[ch] || FONT5x7[' '];
+      // Add columns in reverse order for each character
+      cols.push(0x00); // spacing between characters
+      for (let ci = glyph.length - 1; ci >= 0; ci--) {
+        cols.push(glyph[ci]);
+      }
+    }
+  }
+
+  const padding = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+  const buffer = padding.concat(cols).concat(padding);
+
+  // Total positions available based on number of sides
+  const positionsPerSide = 8;
+  const totalPositions = sides * positionsPerSide;
+
+  const frames = [];
+
+  // Create frames where text flows continuously around the sides
+  // We need enough frames to scroll the entire buffer through the visible window
+  const numFrames = buffer.length + totalPositions;
+
+  for (let frameIdx = 0; frameIdx < numFrames; frameIdx++) {
+    const frame = new Array(64).fill(0x00);
+
+    // For this frame, render columns at each visible position
+    for (let pos = 0; pos < totalPositions; pos++) {
+      // Calculate which column from the buffer should appear at this position
+      const bufferIndex = frameIdx - pos;
+
+      if (bufferIndex >= 0 && bufferIndex < buffer.length) {
+        const col = buffer[bufferIndex];
+        setColumnAtPosition(frame, col, pos);
+      }
+    }
+
+    frames.push(frame);
+  }
+
+  return frames;
+}
+
+// Render a single glyph and produce animated frames
+import { rotateZ90 } from './drawHelpers.js';
+
+export function generateGlyphFrames(char = 'A', steps = 4, mode = 'flat') {
+  const ch = String(char || ' ').toUpperCase();
+  const glyph = FONT5x7[ch] || FONT5x7[' '];
+
+  if (mode === '3d') {
+    // 3D center spin: render glyph in multiple layers with rotation
+    return generate3DGlyphSpin(glyph, steps);
+  } else {
+    // Flat rotation on front face
+    const base = renderColumnsToFace(glyph, 'front', 1); // center-ish
+    const res = [base];
+    let cur = base;
+    for (let s = 1; s < steps; s++) {
+      cur = rotateZ90(cur);
+      res.push(cur.slice());
+    }
+    return res;
+  }
+}
+
+// Generate 3D spinning glyph in center of cube
+function generate3DGlyphSpin(glyph, steps) {
+  const frames = [];
+
+  // Create a 3D representation: render glyph on multiple Y planes (layers)
+  for (let step = 0; step < steps; step++) {
+    const frame = new Array(64).fill(0x00);
+    const angle = (step / steps) * Math.PI * 2;
+
+    // Render glyph columns with 3D rotation effect
+    for (let cx = 0; cx < Math.min(5, glyph.length); cx++) {
+      const col = flipColumnVertical(glyph[cx] || 0);
+
+      // Position in 3D space (center the glyph)
+      const baseX = cx + 1; // offset to center
+
+      // Apply rotation around Y axis
+      const rotatedX = Math.round(4 + (baseX - 4) * Math.cos(angle));
+      const depth = Math.round(4 + (baseX - 4) * Math.sin(angle));
+
+      if (rotatedX >= 0 && rotatedX < 8 && depth >= 0 && depth < 8) {
+        // Set the column at this position
+        let mask = 0;
+        for (let z = 0; z < 7; z++) {
+          if ((col >> z) & 1) mask |= 1 << z;
+        }
+
+        // Place in multiple Y layers for depth effect
+        const centerY = 4;
+        for (let dy = -1; dy <= 1; dy++) {
+          const y = centerY + dy;
+          if (y >= 0 && y < 8) {
+            // Scale brightness by depth (simulated by placing in multiple layers)
+            const depthFactor = 1 - Math.abs(depth - 4) * 0.15;
+            if (depthFactor > 0.3) {
+              frame[8 * y + rotatedX] |= mask;
+            }
+          }
+        }
+      }
+    }
+
+    frames.push(frame);
+  }
+
+  return frames;
 }
