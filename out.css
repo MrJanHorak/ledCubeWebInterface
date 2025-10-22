@@ -1,6 +1,11 @@
+/* src/styles.css */
 .app-full,
 body {
-  font-family: Inter, system-ui, Arial, sans-serif;
+  font-family:
+    Inter,
+    system-ui,
+    Arial,
+    sans-serif;
   margin: 0;
   color: #122;
 }
@@ -25,7 +30,6 @@ body {
   max-width: 40%;
   min-width: 260px;
 }
-
 .sidebar-tabs {
   display: flex;
   gap: 6px;
@@ -56,16 +60,14 @@ body {
   flex-wrap: wrap;
   margin-bottom: 10px;
 }
-
 .card-panel button,
-.card-panel input[type='text'],
+.card-panel input[type=text],
 .card-panel select,
-.card-panel input[type='number'] {
+.card-panel input[type=number] {
   padding: 6px 8px;
   border-radius: 6px;
   border: 1px solid #dcdcdc;
 }
-
 .card-panel h4 {
   margin: 0 0 8px 0;
 }
@@ -75,7 +77,6 @@ body {
 .preview-row {
   flex-basis: 100%;
 }
-/* Centered editor/animation row */
 .centered-row {
   display: flex;
   justify-content: center;
@@ -100,7 +101,6 @@ body {
   max-width: 340px;
   margin: 0 auto;
 }
-/* timeline placed under preview */
 .timeline-row {
   flex-basis: 100%;
   display: flex;
@@ -190,7 +190,6 @@ body {
   gap: 8px;
   align-items: center;
 }
-
 .playback-bar {
   display: flex;
   gap: 10px;
@@ -210,7 +209,6 @@ body {
   background: #fff;
   border: 1px solid #f0f0f0;
 }
-
 .card-panel {
   border-radius: 8px;
   background: #f8fafb;
@@ -220,8 +218,6 @@ body {
 .export {
   margin-top: 14px;
 }
-
-/* compact buttons and inputs */
 button {
   padding: 8px 10px;
   border-radius: 8px;
@@ -240,20 +236,17 @@ button:focus {
   outline: 3px solid rgba(50, 130, 210, 0.18);
   outline-offset: 2px;
 }
-input[type='number'] {
+input[type=number] {
   padding: 6px;
   border-radius: 6px;
   border: 1px solid #cfcfcf;
 }
-
-/* 3D preview container adjustments */
 .cube3d {
   width: 100%;
   border: 1px solid #ddd;
   border-radius: 8px;
   background: linear-gradient(#fafafa, #fff);
 }
-
 @media (max-width: 900px) {
   .app-full main {
     flex-direction: column;
@@ -281,8 +274,6 @@ input[type='number'] {
     width: 100%;
   }
 }
-
-/* help overlay */
 .help-overlay {
   position: fixed;
   left: 0;
@@ -305,8 +296,6 @@ input[type='number'] {
 }
 .help-box h2 {
   margin-top: 0;
-
-  /* help content columns */
   .help-content {
     display: flex;
     gap: 18px;
@@ -343,8 +332,6 @@ input[type='number'] {
   padding: 6px 10px;
   border-radius: 6px;
 }
-
-/* toast */
 .toast {
   position: fixed;
   right: 18px;
