@@ -77,12 +77,15 @@ export default function CubeEditor({ frame, onChange }) {
         aria-label={`Front-to-back layer ${layer + 1} editor`}
       >
         {/* rows are Z (0..7 top->bottom), columns are X (0..7 left->right) */}
+        {/* Flip Z order to match 3D display orientation */}
         {[...Array(8)].map((_, z) => (
           <div className='row' key={z} role='row'>
             {[...Array(8)].map((_, x) => {
               const mappedY = 7 - layer;
               const idx = 8 * mappedY + x; // column at depth= mappedY
-              const mask = 1 << z;
+              // Flip Z coordinate to match 3D display
+              const flippedZ = 7 - z;
+              const mask = 1 << flippedZ;
               const on = (local[idx] & mask) !== 0;
               return (
                 <div
@@ -90,13 +93,13 @@ export default function CubeEditor({ frame, onChange }) {
                   role='gridcell'
                   tabIndex={0}
                   aria-checked={on}
-                  title={`Toggle x=${x} z=${z} y=${mappedY + 1}`}
+                  title={`Toggle x=${x} z=${flippedZ} y=${mappedY + 1}`}
                   className={on ? 'cell on' : 'cell'}
-                  onClick={() => toggle(x, z)}
+                  onClick={() => toggle(x, flippedZ)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
-                      toggle(x, z);
+                      toggle(x, flippedZ);
                     }
                   }}
                 ></div>

@@ -33,7 +33,6 @@ export default function App() {
   const [glyphInput, setGlyphInput] = useState('A');
   const [scrollSides, setScrollSides] = useState(1);
   const [glyphMode, setGlyphMode] = useState('flat');
-  const [displayMirrorX, setDisplayMirrorX] = useState(false);
   const [transitionSteps, setTransitionSteps] = useState(6);
   const [activeTab, setActiveTab] = useState('playback');
   const [toast, setToast] = useState(null);
@@ -165,10 +164,12 @@ export default function App() {
     try {
       const openCmd = new Uint8Array(70).fill(0xad);
       await writeToPort(serialPort, openCmd);
+      // Apply mirroring transformation to match physical cube orientation
       for (const frame of frames) {
+        const transformedFrame = mirrorX(frame);
         const buf = new Uint8Array(65);
         buf[0] = 0xf2;
-        for (let i = 0; i < 64; i++) buf[i + 1] = frame[i] || 0;
+        for (let i = 0; i < 64; i++) buf[i + 1] = transformedFrame[i] || 0;
         await writeToPort(serialPort, buf);
       }
       const closeCmd = new Uint8Array(70).fill(0xed);
@@ -199,9 +200,7 @@ export default function App() {
     showToast(`Downloaded ${filename}`);
   }
 
-  const displayFrame = displayMirrorX
-    ? mirrorX(frames[current])
-    : frames[current];
+  const displayFrame = frames[current];
 
   return (
     <div className='app-full'>
