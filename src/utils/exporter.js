@@ -441,7 +441,7 @@ function generate3DGlyphSpin(glyph, steps) {
           // Character position in cube space (before rotation)
           const charX = col - Math.floor(CHAR_WIDTH / 2); // -2 to +2 (horizontal position)
           const charY = 0; // Start at center depth
-          const charZ = (CHAR_HEIGHT - 1) - row; // Flip vertically: row 0 becomes top, row 6 becomes bottom
+          const charZ = CHAR_HEIGHT - 1 - row; // Flip vertically: row 0 becomes top, row 6 becomes bottom
 
           // Apply Z-axis rotation (spinning around vertical Z-axis, keeping letters upright)
           const cosAngle = Math.cos(angle);
