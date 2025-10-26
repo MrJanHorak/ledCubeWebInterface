@@ -254,6 +254,15 @@ const CUBE8x8_FONT = {
   '|': [0x00, 0x00, 0x7f, 0x00, 0x00],
   _: [0x40, 0x40, 0x40, 0x40, 0x40],
   ',': [0x00, 0x80, 0x60, 0x00, 0x00],
+  // --- Emoticons (5x7) - usable with generateGlyphFrames(name, steps, '3d') ---
+  // Simple, tweak column values to refine appearance when previewing in 3D
+  SMILE: [0x00, 0x42, 0x5A, 0x00, 0x00],
+  SAD:   [0x00, 0x5A, 0x42, 0x00, 0x00],
+  // Upright heart (5x7 columns) — corrected orientation to match letters
+  // Columns (LSB = top row): [0x0E, 0x1F, 0x3E, 0x1E, 0x06]
+  HEART: [0x0E, 0x1F, 0x3E, 0x1E, 0x06],
+  WINK:  [0x00, 0x42, 0x52, 0x00, 0x00],
+  TONGUE:[0x00, 0x49, 0x36, 0x00, 0x00],
 };
 
 // Helper: flip font column bits vertically (fix upside-down letters)
@@ -438,10 +447,32 @@ function generate3DGlyphSpin(glyph, steps) {
 
       for (let row = 0; row < CHAR_HEIGHT; row++) {
         if (columnData & (1 << row)) {
-          // Character position in cube space (before rotation)
-          const charX = col - Math.floor(CHAR_WIDTH / 2); // -2 to +2 (horizontal position)
-          const charY = 0; // Start at center depth
-          const charZ = CHAR_HEIGHT - 1 - row; // Flip vertically: row 0 becomes top, row 6 becomes bottom
+            // Character position in cube space (before rotation)
+            // By default glyphs are stored as 5x7 columns (width=5, height=7)
+            // Some custom emoticon entries were authored rotated 90deg. Detect
+            // known emoticon keys and remap coordinates so they render upright.
+            const emoticonKeys = ['SMILE', 'SAD', 'HEART', 'WINK', 'TONGUE'];
+
+            let charX, charY, charZ;
+            if (emoticonKeys.includes(String(glyph).toUpperCase())) {
+              // Remap a 5x7 glyph that was created in a rotated orientation.
+              // We map the original (col,row) grid into (x,z) with scaling so
+              // the 5x7 content fills the same visual area as normal letters.
+              // Scale factors to convert between dimensions:
+              const scaleX = (CHAR_WIDTH - 1) / (CHAR_HEIGHT - 1); // 4/6
+              const scaleZ = (CHAR_HEIGHT - 1) / (CHAR_WIDTH - 1); // 6/4
+
+              // Map row -> X (horizontal), centered and scaled into -2..+2
+              charX = Math.round((row - Math.floor(CHAR_HEIGHT / 2)) * scaleX);
+              // Depth (vertical axis for glyph) comes from column -> Z (0..6)
+              charZ = Math.round((CHAR_WIDTH - 1 - col) * scaleZ);
+              charY = 0; // center depth (will be rotated around)
+            } else {
+              // Standard mapping for letter glyphs
+              charX = col - Math.floor(CHAR_WIDTH / 2); // -2 to +2 (horizontal position)
+              charY = 0; // Start at center depth
+              charZ = CHAR_HEIGHT - 1 - row; // Flip vertically: row 0 becomes top, row 6 becomes bottom
+            }
 
           // Apply Z-axis rotation (spinning around vertical Z-axis, keeping letters upright)
           const cosAngle = Math.cos(angle);

@@ -34,6 +34,7 @@ export default function App() {
   const [scrollSides, setScrollSides] = useState(1);
   const [glyphMode, setGlyphMode] = useState('flat');
   const [transitionSteps, setTransitionSteps] = useState(6);
+  const [emoticon, setEmoticon] = useState('SMILE');
   const [activeTab, setActiveTab] = useState('playback');
   const [toast, setToast] = useState(null);
 
@@ -95,6 +96,16 @@ export default function App() {
 
   function startGlyphSpin() {
     const glyphFrames = generateGlyphFrames(glyphInput || 'A', 6, glyphMode);
+    setFrames(glyphFrames);
+    setCurrent(0);
+    setActiveTab('playback');
+  }
+
+  function startEmoticonSpin() {
+    // force 3D mode for emoticons
+    const steps = 8; // smoothness of spin
+    const glyphFrames = generateGlyphFrames(emoticon || 'SMILE', steps, '3d');
+    if (!glyphFrames || glyphFrames.length === 0) return showToast('No emoticon frames');
     setFrames(glyphFrames);
     setCurrent(0);
     setActiveTab('playback');
@@ -300,6 +311,22 @@ export default function App() {
                 <option value='flat'>Flat</option>
                 <option value='3d'>3D</option>
               </select>
+              {/* Emoticon selector - uses 3D spinner */}
+              <div style={{ marginTop: 8 }}>
+                <select
+                  value={emoticon}
+                  onChange={(e) => setEmoticon(e.target.value)}
+                >
+                  <option value='SMILE'>🙂 SMILE</option>
+                  <option value='SAD'>☹️ SAD</option>
+                  <option value='HEART'>❤ HEART</option>
+                  <option value='WINK'>😉 WINK</option>
+                  <option value='TONGUE'>😛 TONGUE</option>
+                </select>
+                <button onClick={startEmoticonSpin} style={{ marginLeft: 8 }}>
+                  Spin Emoticon
+                </button>
+              </div>
             </div>
           </div>
 
