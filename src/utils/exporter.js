@@ -283,15 +283,16 @@ const CUBE8x8_FONT = {
   '|': [0x00, 0x00, 0x7f, 0x00, 0x00],
   _: [0x40, 0x40, 0x40, 0x40, 0x40],
   ',': [0x00, 0x80, 0x60, 0x00, 0x00],
-  // --- Emoticons (5x7) - usable with generateGlyphFrames(name, steps, '3d') ---
+
   // Simple, tweak column values to refine appearance when previewing in 3D
-  SMILE: [0x00, 0x42, 0x5a, 0x00, 0x00],
-  SAD: [0x00, 0x5a, 0x42, 0x00, 0x00],
-  // Upright heart (5x7 columns) — corrected orientation to match letters
-  // Columns (LSB = top row): [0x0E, 0x1F, 0x3E, 0x1E, 0x06]
+  SMILE: [0x3C, 0x42, 0xA9, 0x85, 0x85, 0xA9, 0x42, 0x3C],
+  SAD: [0x3C, 0x42, 0xA5, 0x89, 0x89, 0xA5, 0x42, 0x3C],
+  WINK: [0x3C, 0x42, 0x89, 0x85, 0x85, 0xA9, 0x42, 0x3C],
   HEART: [0x3c, 0x46, 0x23, 0x23, 0x46, 0x3c],
-  WINK: [0x00, 0x42, 0x52, 0x00, 0x00],
-  TONGUE: [0x00, 0x49, 0x36, 0x00, 0x00],
+  SHOCK: [ 0x3C, 0x42, 0xA1, 0x8D, 0x8D, 0xA1, 0x42, 0x3C],
+  ANGRY: [0x3C, 0x42, 0xE5, 0x85, 0x85, 0xE5, 0x42, 0x3C],
+  BORED: [0x3C, 0x42, 0xA5, 0x85, 0x85, 0xA5, 0x42, 0x3C],
+  TONGUE: [0x3C, 0x42, 0xAF, 0x89, 0x89, 0xAF, 0x42, 0x3C],
 };
 
 // Helper: flip font column bits vertically (fix upside-down letters)
@@ -446,234 +447,69 @@ export function generateGlyphFrames(char = 'A', steps = 4, mode = 'flat') {
   }
 }
 
-// Generate 3D spinning glyph in center of cube - TRUE 3D rotation with readable letters
-// function generate3DGlyphSpin(glyph, steps) {
-//   const frames = [];
-
-//   // Use the new CUBE8x8_FONT for optimal 3D display
-//   const charPattern = CUBE8x8_FONT[glyph.toUpperCase()] || CUBE8x8_FONT[' '];
-
-//   for (let step = 0; step < steps; step++) {
-//     const frame = new Array(64).fill(0x00);
-//     const angle = (step / steps) * Math.PI * 2;
-
-//     // Perfect 8x8x8 cube centering
-//     const CUBE_SIZE = 8;
-//     const CHAR_WIDTH = 5;
-//     const CHAR_HEIGHT = 7;
-
-//     // Mathematical center of 8x8x8 cube (index 3.5, use 4 for integer grid)
-//     const centerX = 4;
-//     const centerY = 4;
-//     const centerZ = 4;
-
-//     // Character bounds relative to center
-//     const charStartX = centerX - Math.floor(CHAR_WIDTH / 2); // 2
-//     const charStartY = centerY - Math.floor(CHAR_HEIGHT / 2); // 1
-
-//     for (let col = 0; col < CHAR_WIDTH; col++) {
-//       const columnData = charPattern[col];
-
-//       for (let row = 0; row < CHAR_HEIGHT; row++) {
-//         if (columnData & (1 << row)) {
-//           // Character position in cube space (before rotation)
-//           // By default glyphs are stored as 5x7 columns (width=5, height=7)
-//           // Some custom emoticon entries were authored rotated 90deg. Detect
-//           // known emoticon keys and remap coordinates so they render upright.
-//           const emoticonKeys = ['SMILE', 'SAD', 'WINK', 'TONGUE'];
-
-//           let charX, charY, charZ;
-//           if (emoticonKeys.includes(String(glyph).toUpperCase())) {
-//             // Remap a 5x7 glyph that was created in a rotated orientation.
-//             // We map the original (col,row) grid into (x,z) with scaling so
-//             // the 5x7 content fills the same visual area as normal letters.
-//             // Scale factors to convert between dimensions:
-//             const scaleX = (CHAR_WIDTH - 1) / (CHAR_HEIGHT - 1); // 4/6
-//             const scaleZ = (CHAR_HEIGHT - 1) / (CHAR_WIDTH - 1); // 6/4
-
-//             // Map row -> X (horizontal), centered and scaled into -2..+2
-//             charX = Math.round((row - Math.floor(CHAR_HEIGHT / 2)) * scaleX);
-//             // Depth (vertical axis for glyph) comes from column -> Z (0..6)
-//             charZ = Math.round((CHAR_WIDTH - 1 - col) * scaleZ);
-//             charY = 0; // center depth (will be rotated around)
-//           } else {
-//             // Standard mapping for letter glyphs
-//             charX = col - Math.floor(CHAR_WIDTH / 2); // -2 to +2 (horizontal position)
-//             charY = 0; // Start at center depth
-//             charZ = CHAR_HEIGHT - 1 - row; // Flip vertically: row 0 becomes top, row 6 becomes bottom
-//           }
-
-//           // Apply Z-axis rotation (spinning around vertical Z-axis, keeping letters upright)
-//           const cosAngle = Math.cos(angle);
-//           const sinAngle = Math.sin(angle);
-
-//           // Rotate around Z-axis: X and Y change, Z stays the same (upright)
-//           const rotatedX = charX * cosAngle - charY * sinAngle;
-//           const rotatedY = charX * sinAngle + charY * cosAngle;
-
-//           // Convert to cube coordinates
-//           const cubeX = Math.round(centerX + rotatedX);
-//           const cubeY = Math.round(centerY + rotatedY);
-//           const cubeZ = charStartY + charZ; // Z is the vertical axis (now properly flipped)
-
-//           // Draw character 2 layers thick for 3D visibility
-//           for (let thickness = 0; thickness < 2; thickness++) {
-//             const finalCubeY = cubeY + (thickness - 0.5); // Center the thickness around rotation
-//             const finalY = Math.round(finalCubeY);
-
-//             // Bounds checking
-//             if (
-//               cubeX >= 0 &&
-//               cubeX < CUBE_SIZE &&
-//               finalY >= 0 &&
-//               finalY < CUBE_SIZE &&
-//               cubeZ >= 0 &&
-//               cubeZ < CUBE_SIZE
-//             ) {
-//               const byteIndex = CUBE_SIZE * finalY + cubeX;
-//               if (byteIndex >= 0 && byteIndex < 64) {
-//                 frame[byteIndex] |= 1 << cubeZ;
-//               }
-//             }
-//           }
-//         }
-//       }
-//     }
-
-//     frames.push(frame);
-//   }
-
-//   return frames;
-// }
-
-// Generate 3D spinning glyph in center of cube - TRUE 3D rotation with readable letters
-// function generate3DGlyphSpin(glyph, steps) {
-//   const frames = [];
-
-//   // Use the new CUBE8x8_FONT for optimal 3D display
-//   const charPattern = CUBE8x8_FONT[glyph.toUpperCase()] || CUBE8x8_FONT[' '];
-
-//   for (let step = 0; step < steps; step++) {
-//     const frame = new Array(64).fill(0x00);
-//     const angle = (step / steps) * Math.PI * 2;
-
-//     // Perfect 8x8x8 cube centering
-//     const CUBE_SIZE = 8;
-//     const CHAR_WIDTH = 6;
-//     const CHAR_HEIGHT = 7;
-
-//     // Mathematical center of 8x8x8 cube
-//     const centerX = 3.5;
-//     const centerY = 3.5;
-//     const centerZ = 4;
-
-//     // Character bounds relative to center
-//     const charStartX = centerX - Math.floor(CHAR_WIDTH / 2); // 2
-//     const charStartY = centerY - Math.floor(CHAR_HEIGHT / 2); // 1
-
-//     for (let col = 0; col < CHAR_WIDTH; col++) {
-//       const columnData = charPattern[col];
-
-//       for (let row = 0; row < CHAR_HEIGHT; row++) {
-//         if (columnData & (1 << row)) {
-//           // Standard mapping for ALL glyphs (letters and emoticons)
-//           const charX = col - 2.5; // -2 to +2 (horizontal position)
-//           const charY = 0; // Start at center depth
-
-//           // FIX: Changed from (CHAR_HEIGHT - 1 - row) to just (row)
-//           // This ensures the LSB (bottom bit) maps to the bottom layer, flipping everything right-side up!
-//           const charZ = row;
-
-//           // Apply Z-axis rotation (spinning around vertical Z-axis, keeping shapes upright)
-//           const cosAngle = Math.cos(angle);
-//           const sinAngle = Math.sin(angle);
-
-//           // Rotate around Z-axis: X and Y change, Z stays the same (upright)
-//           const rotatedX = charX * cosAngle - charY * sinAngle;
-//           const rotatedY = charX * sinAngle + charY * cosAngle;
-
-//           // Convert to cube coordinates
-//           const cubeX = Math.round(centerX + rotatedX);
-//           const rawCubeY = centerY + rotatedY;
-//           const cubeZ = charStartY + charZ; // Z is the vertical axis
-
-//           // Draw character 2 layers thick for 3D visibility
-//           for (let thickness = 0; thickness < 2; thickness++) {
-//             // const finalCubeY = cubeY + (thickness - 0.5); // Center the thickness around rotation
-//             const finalY = Math.round(rawCubeY + (thickness - 0.5));
-
-//             // Bounds checking
-//             if (
-//               cubeX >= 0 &&
-//               cubeX < CUBE_SIZE &&
-//               finalY >= 0 &&
-//               finalY < CUBE_SIZE &&
-//               cubeZ >= 0 &&
-//               cubeZ < CUBE_SIZE
-//             ) {
-//               const byteIndex = CUBE_SIZE * finalY + cubeX;
-//               if (byteIndex >= 0 && byteIndex < 64) {
-//                 frame[byteIndex] |= 1 << cubeZ;
-//               }
-//             }
-//           }
-//         }
-//       }
-//     }
-
-//     frames.push(frame);
-//   }
-
-//   return frames;
-// }
-
-// Generate 3D spinning glyph in center of cube - TRUE 3D rotation with consistent thickness
 function generate3DGlyphSpin(glyph, steps) {
   const frames = [];
 
   // Use the new CUBE8x8_FONT for optimal 3D display
   const charPattern = CUBE8x8_FONT[glyph.toUpperCase()] || CUBE8x8_FONT[' '];
 
+  const CUBE_SIZE = 8;
+  const ACTUAL_WIDTH = charPattern.length; 
+
+  // 1. DYNAMIC HEIGHT CALCULATOR
+  // Scans the array values to check if any column uses all 8 vertical bits
+  let maxBitRow = 0;
+  for (let col = 0; col < ACTUAL_WIDTH; col++) {
+    const val = charPattern[col];
+    for (let bit = 7; bit >= 0; bit--) {
+      if ((val & (1 << bit)) && bit > maxBitRow) {
+        maxBitRow = bit;
+      }
+    }
+  }
+  // The row height matches the highest active bit + 1 (e.g., bit 7 active = height 8)
+  const ACTUAL_HEIGHT = Math.max(7, maxBitRow + 1);
+
+  // Symmetrical centers across the 2D plane
+  const centerX = 3.5;
+  const centerY = 3.5;
+  
+  // 2. DYNAMIC VERTICAL ALIGNMENT
+  // Safely pins the bottom layer to index 0 if the icon fills all 8 layers
+  const charStartY = ACTUAL_HEIGHT >= 8 ? 0 : Math.round(4 - (ACTUAL_HEIGHT / 2));
+
+  // Dynamic horizontal midpoint balancing
+  const localCenter = (ACTUAL_WIDTH - 1) / 2;
+
+  const emoticonKeys = ['SMILE', 'SAD', 'WINK','HEART',  'SHOCK', 'ANGRY', 'BORED','TONGUE' ];
+  const isEmoticon = emoticonKeys.includes(String(glyph).toUpperCase());
+
   for (let step = 0; step < steps; step++) {
     const frame = new Array(64).fill(0x00);
     const angle = (step / steps) * Math.PI * 2;
 
-    const CUBE_SIZE = 8;
-    const CHAR_WIDTH = 6;
-    const CHAR_HEIGHT = 7;
-
-    // Center of the 8x8 space
-    const centerX = 3.5;
-    const centerY = 3.5;
-    const centerZ = 4;
-
-    const charStartY = centerY - Math.floor(CHAR_HEIGHT / 2);
-
-    for (let col = 0; col < CHAR_WIDTH; col++) {
+    for (let col = 0; col < ACTUAL_WIDTH; col++) {
       const columnData = charPattern[col];
 
-      for (let row = 0; row < CHAR_HEIGHT; row++) {
+      // 3. FIX: Check all layers up to the dynamic character height limit
+      for (let row = 0; row < ACTUAL_HEIGHT; row++) {
         if (columnData & (1 << row)) {
           
-          // Base local coordinates
-          const charX = col - 2.5; 
-          const charZ = row; 
+          const charX = col - localCenter; 
+          const charZ = isEmoticon ? row : (ACTUAL_HEIGHT - 1 - row); 
 
-          // FIX: Loop through thickness locally BEFORE rotating!
-          // This ensures the 2 layers are stacked on the character's face,
-          // so they spin together like a solid 3D object.
+          // Thickness logic loop
           for (let thickness = 0; thickness < 2; thickness++) {
-            // Stack the layers closely around the center plane depth
             const charY = thickness - 0.5; 
 
-            // Apply Z-axis rotation to the true 3D point (charX, charY)
+            // Rotation equations
             const cosAngle = Math.cos(angle);
             const sinAngle = Math.sin(angle);
 
             const rotatedX = charX * cosAngle - charY * sinAngle;
             const rotatedY = charX * sinAngle + charY * cosAngle;
 
-            // Convert to final whole-integer cube coordinates
+            // Final coordinate maps
             const cubeX = Math.round(centerX + rotatedX);
             const finalY = Math.round(centerY + rotatedY);
             const cubeZ = charStartY + charZ;

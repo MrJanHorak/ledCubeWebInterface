@@ -324,8 +324,11 @@ export default function App() {
                 >
                   <option value='SMILE'>🙂 SMILE</option>
                   <option value='SAD'>☹️ SAD</option>
-                  <option value='HEART'>❤ HEART</option>
                   <option value='WINK'>😉 WINK</option>
+                  <option value='HEART'>💗 HEART</option>
+                  <option value='SHOCK'>😮 SHOCK</option>
+                  <option value='ANGRY'>😡 ANGRY</option>
+                  <option value='BORED'>🫩 BORED</option>
                   <option value='TONGUE'>😛 TONGUE</option>
                 </select>
                 <button onClick={startEmoticonSpin} style={{ marginLeft: 8 }}>
