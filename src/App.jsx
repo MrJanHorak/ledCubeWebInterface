@@ -4,7 +4,6 @@ import Cube3D from './components/Cube3D';
 import HelpOverlay from './components/HelpOverlay';
 import { requestPort, openPort, writeToPort, closePort } from './utils/serial';
 import {
-  framesForJAN,
   framesToCArray,
   generateHFile,
   generateSketch,
@@ -21,7 +20,7 @@ import {
 } from './utils/drawHelpers';
 
 export default function App() {
-  const [frames, setFrames] = useState(framesForJAN());
+  const [frames, setFrames] = useState([]);
   const [current, setCurrent] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [delayMs, setDelayMs] = useState(300);
@@ -42,9 +41,12 @@ export default function App() {
 
   useEffect(() => {
     if (!playing) return;
-    playRef.current = setInterval(() => {
-      setCurrent((c) => (c + 1) % frames.length);
-    }, Math.max(50, delayMs));
+    playRef.current = setInterval(
+      () => {
+        setCurrent((c) => (c + 1) % frames.length);
+      },
+      Math.max(50, delayMs),
+    );
     return () => clearInterval(playRef.current);
   }, [playing, delayMs, frames.length]);
 
@@ -105,7 +107,8 @@ export default function App() {
     // force 3D mode for emoticons
     const steps = 8; // smoothness of spin
     const glyphFrames = generateGlyphFrames(emoticon || 'SMILE', steps, '3d');
-    if (!glyphFrames || glyphFrames.length === 0) return showToast('No emoticon frames');
+    if (!glyphFrames || glyphFrames.length === 0)
+      return showToast('No emoticon frames');
     setFrames(glyphFrames);
     setCurrent(0);
     setActiveTab('playback');
@@ -281,8 +284,10 @@ export default function App() {
                 placeholder='Text'
               />
               <button onClick={startTextScroll}>Scroll Text</button>
+            </div>
+            <div style={{ marginBottom: 10 }}>
               <label>
-                Sides:{' '}
+                Number of Sides to display text:{' '}
                 <input
                   type='number'
                   min={1}
@@ -472,7 +477,7 @@ export default function App() {
                     onClick={() =>
                       downloadFile(
                         generateStreamingReceiverSketch(),
-                        'receiver.ino'
+                        'receiver.ino',
                       )
                     }
                   >

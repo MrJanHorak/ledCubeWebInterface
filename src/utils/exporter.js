@@ -28,44 +28,6 @@ export function framesToCArray(frames, name) {
   return out;
 }
 
-// Provide simple frames for J, A, N as examples (very small shapes centered)
-export function framesForJAN() {
-  // start with blanks
-  const blank = new Array(64).fill(0x00);
-  const J = blank.slice();
-  const A = blank.slice();
-  const N = blank.slice();
-
-  // Example patterns (coarse) - set some columns
-  // J: vertical on right columns and hook at bottom
-  J[8 * 2 + 5] = 0x7e;
-  J[8 * 3 + 5] = 0x7e;
-  J[8 * 2 + 2] = 0x80;
-  J[8 * 2 + 3] = 0x80;
-  J[8 * 2 + 4] = 0x80;
-  J[8 * 2 + 5] = 0x7e;
-
-  // A: vertical sides and crossbar
-  A[8 * 3 + 2] = 0xfe;
-  A[8 * 4 + 2] = 0xfe;
-  A[8 * 3 + 5] = 0xfe;
-  A[8 * 4 + 5] = 0xfe;
-  A[8 * 2 + 3] = 0x80;
-  A[8 * 2 + 4] = 0x80;
-  A[8 * 4 + 3] = 0x10;
-  A[8 * 4 + 4] = 0x10;
-
-  // N: left and right, diagonal
-  N[8 * 3 + 2] = 0xfe;
-  N[8 * 4 + 2] = 0xfe;
-  N[8 * 3 + 5] = 0xfe;
-  N[8 * 4 + 5] = 0xfe;
-  N[8 * 3 + 3] = 0x42;
-  N[8 * 4 + 4] = 0x24;
-
-  return [J, A, N];
-}
-
 export function generateHFile(name, frames) {
   const arr = framesToCArray(frames, name);
   const guard = `_${name}_H_`.toUpperCase();
@@ -92,10 +54,77 @@ export function generateSketch(name, frames) {
 }
 
 // Generate a receiver sketch that accepts frames over Serial with checksum/ACK
+// export function generateStreamingReceiverSketch() {
+//   const sketch = `// Streaming receiver sketch for LED Cube - receives frames over Serial\n\n#include <Arduino.h>\n\nconst uint8_t FRAME_MARKER = 0xF2;\nconst uint8_t ACK = 0xAA;\nconst uint8_t NACK = 0xFF;\n\n// Replace this with your cube display function.\nvoid displayFrame(const uint8_t *frame) {\n  // TODO: map 64-byte frame into your cube wiring and update outputs\n  // Example placeholder: blink onboard LED to indicate frame received\n  digitalWrite(LED_BUILTIN, HIGH);\n  delay(20);\n  digitalWrite(LED_BUILTIN, LOW);\n}\n\nvoid setup() {\n  Serial.begin(38400);\n  pinMode(LED_BUILTIN, OUTPUT);\n}\n\nvoid loop() {\n  if (Serial.available() <= 0) return;\n  int c = Serial.read();\n  if (c != FRAME_MARKER) return;\n\n  // read 64 bytes for frame\n  uint8_t buf[64];\n  unsigned long start = millis();\n  int got = 0;\n  while (got < 64 && (millis() - start) < 1000) {\n    if (Serial.available() > 0) {\n      int v = Serial.read();\n      if (v >= 0) buf[got++] = (uint8_t)v;\n    }
+//   }
+//   if (got < 64) {\n+    Serial.write(NACK);\n+    return;\n+  }\n+\n+  // read checksum\n+  start = millis();\n+  while (Serial.available() == 0 && (millis() - start) < 500) ;\n+  if (Serial.available() == 0) {\n+    Serial.write(NACK);\n+    return;\n+  }\n+  uint8_t checksum = (uint8_t)Serial.read();\n+\n+  uint8_t sum = 0;\n+  for (int i = 0; i < 64; i++) sum += buf[i];\n+  if (sum != checksum) {\n+    Serial.write(NACK);\n+    return;\n+  }\n+\n+  // valid frame - acknowledge and display\n+  Serial.write(ACK);\n+  displayFrame(buf);\n+}\n+`;
+
+//   return sketch;
+// }
+
 export function generateStreamingReceiverSketch() {
-  const sketch = `// Streaming receiver sketch for LED Cube - receives frames over Serial\n\n#include <Arduino.h>\n\nconst uint8_t FRAME_MARKER = 0xF2;\nconst uint8_t ACK = 0xAA;\nconst uint8_t NACK = 0xFF;\n\n// Replace this with your cube display function.\nvoid displayFrame(const uint8_t *frame) {\n  // TODO: map 64-byte frame into your cube wiring and update outputs\n  // Example placeholder: blink onboard LED to indicate frame received\n  digitalWrite(LED_BUILTIN, HIGH);\n  delay(20);\n  digitalWrite(LED_BUILTIN, LOW);\n}\n\nvoid setup() {\n  Serial.begin(38400);\n  pinMode(LED_BUILTIN, OUTPUT);\n}\n\nvoid loop() {\n  if (Serial.available() <= 0) return;\n  int c = Serial.read();\n  if (c != FRAME_MARKER) return;\n\n  // read 64 bytes for frame\n  uint8_t buf[64];\n  unsigned long start = millis();\n  int got = 0;\n  while (got < 64 && (millis() - start) < 1000) {\n    if (Serial.available() > 0) {\n      int v = Serial.read();\n      if (v >= 0) buf[got++] = (uint8_t)v;\n    }
+  const sketch = `// Streaming receiver sketch for LED Cube - receives frames over Serial
+
+#include <Arduino.h>
+
+const uint8_t FRAME_MARKER = 0xF2;
+const uint8_t ACK = 0xAA;
+const uint8_t NACK = 0xFF;
+
+// Replace this with your cube display function.
+void displayFrame(const uint8_t *frame) {
+  // TODO: map 64-byte frame into your cube wiring and update outputs
+  // Example placeholder: blink onboard LED to indicate frame received
+  digitalWrite(LED_BUILTIN, HIGH);
+  delay(20);
+  digitalWrite(LED_BUILTIN, LOW);
+}
+
+void setup() {
+  Serial.begin(38400);
+  pinMode(LED_BUILTIN, OUTPUT);
+}
+
+void loop() {
+  if (Serial.available() <= 0) return;
+  int c = Serial.read();
+  if (c != FRAME_MARKER) return;
+
+  // read 64 bytes for frame
+  uint8_t buf[64];
+  unsigned long start = millis();
+  int got = 0;
+  while (got < 64 && (millis() - start) < 1000) {
+    if (Serial.available() > 0) {
+      int v = Serial.read();
+      if (v >= 0) buf[got++] = (uint8_t)v;
+    }
   }
-  if (got < 64) {\n+    Serial.write(NACK);\n+    return;\n+  }\n+\n+  // read checksum\n+  start = millis();\n+  while (Serial.available() == 0 && (millis() - start) < 500) ;\n+  if (Serial.available() == 0) {\n+    Serial.write(NACK);\n+    return;\n+  }\n+  uint8_t checksum = (uint8_t)Serial.read();\n+\n+  uint8_t sum = 0;\n+  for (int i = 0; i < 64; i++) sum += buf[i];\n+  if (sum != checksum) {\n+    Serial.write(NACK);\n+    return;\n+  }\n+\n+  // valid frame - acknowledge and display\n+  Serial.write(ACK);\n+  displayFrame(buf);\n+}\n+`;
+  if (got < 64) {
+    Serial.write(NACK);
+    return;
+  }
+
+  // read checksum
+  start = millis();
+  while (Serial.available() == 0 && (millis() - start) < 500) ;
+  if (Serial.available() == 0) {
+    Serial.write(NACK);
+    return;
+  }
+  uint8_t checksum = (uint8_t)Serial.read();
+
+  uint8_t sum = 0;
+  for (int i = 0; i < 64; i++) sum += buf[i];
+  if (sum != checksum) {
+    Serial.write(NACK);
+    return;
+  }
+
+  // valid frame - acknowledge and display
+  Serial.write(ACK);
+  displayFrame(buf);
+}`;
 
   return sketch;
 }
@@ -144,7 +173,7 @@ const FONT5x7 = {
   '!': [0x00, 0x00, 0x5f, 0x00, 0x00],
   '?': [0x20, 0x40, 0x4d, 0x50, 0x20],
   '-': [0x08, 0x08, 0x08, 0x08, 0x08],
-  _: [0x40, 0x40, 0x40, 0x40, 0x40],
+  '_': [0x40, 0x40, 0x40, 0x40, 0x40],
   '.': [0x00, 0x60, 0x60, 0x00, 0x00],
   ',': [0x00, 0x80, 0x60, 0x00, 0x00],
   ':': [0x00, 0x36, 0x36, 0x00, 0x00],
@@ -166,7 +195,7 @@ const FONT5x7 = {
   '@': [0x3e, 0x41, 0x5d, 0x55, 0x5e],
   '&': [0x36, 0x49, 0x55, 0x22, 0x50],
   '%': [0x62, 0x64, 0x08, 0x13, 0x23],
-  $: [0x24, 0x2a, 0x7f, 0x2a, 0x12],
+  '$': [0x24, 0x2a, 0x7f, 0x2a, 0x12],
   '^': [0x04, 0x02, 0x01, 0x02, 0x04],
   '~': [0x02, 0x01, 0x02, 0x04, 0x02],
   '`': [0x00, 0x01, 0x02, 0x00, 0x00],
@@ -245,24 +274,24 @@ const CUBE8x8_FONT = {
   '@': [0x3e, 0x41, 0x5d, 0x55, 0x5e],
   '&': [0x36, 0x49, 0x55, 0x22, 0x50],
   '%': [0x23, 0x13, 0x08, 0x64, 0x62],
-  $: [0x24, 0x2a, 0x7f, 0x2a, 0x12],
+  '$': [0x24, 0x2a, 0x7f, 0x2a, 0x12],
   '^': [0x04, 0x02, 0x01, 0x02, 0x04],
   '~': [0x02, 0x01, 0x02, 0x04, 0x02],
   '`': [0x00, 0x01, 0x02, 0x04, 0x00],
   "'": [0x00, 0x00, 0x07, 0x00, 0x00],
   '"': [0x00, 0x07, 0x00, 0x07, 0x00],
   '|': [0x00, 0x00, 0x7f, 0x00, 0x00],
-  _: [0x40, 0x40, 0x40, 0x40, 0x40],
+  '_': [0x40, 0x40, 0x40, 0x40, 0x40],
   ',': [0x00, 0x80, 0x60, 0x00, 0x00],
   // --- Emoticons (5x7) - usable with generateGlyphFrames(name, steps, '3d') ---
   // Simple, tweak column values to refine appearance when previewing in 3D
-  SMILE: [0x00, 0x42, 0x5A, 0x00, 0x00],
-  SAD:   [0x00, 0x5A, 0x42, 0x00, 0x00],
+  SMILE: [0x00, 0x42, 0x5a, 0x00, 0x00],
+  SAD: [0x00, 0x5a, 0x42, 0x00, 0x00],
   // Upright heart (5x7 columns) — corrected orientation to match letters
   // Columns (LSB = top row): [0x0E, 0x1F, 0x3E, 0x1E, 0x06]
-  HEART: [0x0E, 0x1F, 0x3E, 0x1E, 0x06],
-  WINK:  [0x00, 0x42, 0x52, 0x00, 0x00],
-  TONGUE:[0x00, 0x49, 0x36, 0x00, 0x00],
+  HEART: [0x0e, 0x1f, 0x3e, 0x1e, 0x06],
+  WINK: [0x00, 0x42, 0x52, 0x00, 0x00],
+  TONGUE: [0x00, 0x49, 0x36, 0x00, 0x00],
 };
 
 // Helper: flip font column bits vertically (fix upside-down letters)
@@ -331,7 +360,7 @@ export function generateTextFrames(text = '', sides = 1, direction = 'ltr') {
     }
   }
 
-  const padding = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+  const padding = [];
   const buffer = padding.concat(cols).concat(padding);
 
   // Total positions available based on number of sides
@@ -447,32 +476,32 @@ function generate3DGlyphSpin(glyph, steps) {
 
       for (let row = 0; row < CHAR_HEIGHT; row++) {
         if (columnData & (1 << row)) {
-            // Character position in cube space (before rotation)
-            // By default glyphs are stored as 5x7 columns (width=5, height=7)
-            // Some custom emoticon entries were authored rotated 90deg. Detect
-            // known emoticon keys and remap coordinates so they render upright.
-            const emoticonKeys = ['SMILE', 'SAD', 'HEART', 'WINK', 'TONGUE'];
+          // Character position in cube space (before rotation)
+          // By default glyphs are stored as 5x7 columns (width=5, height=7)
+          // Some custom emoticon entries were authored rotated 90deg. Detect
+          // known emoticon keys and remap coordinates so they render upright.
+          const emoticonKeys = ['SMILE', 'SAD', 'HEART', 'WINK', 'TONGUE'];
 
-            let charX, charY, charZ;
-            if (emoticonKeys.includes(String(glyph).toUpperCase())) {
-              // Remap a 5x7 glyph that was created in a rotated orientation.
-              // We map the original (col,row) grid into (x,z) with scaling so
-              // the 5x7 content fills the same visual area as normal letters.
-              // Scale factors to convert between dimensions:
-              const scaleX = (CHAR_WIDTH - 1) / (CHAR_HEIGHT - 1); // 4/6
-              const scaleZ = (CHAR_HEIGHT - 1) / (CHAR_WIDTH - 1); // 6/4
+          let charX, charY, charZ;
+          if (emoticonKeys.includes(String(glyph).toUpperCase())) {
+            // Remap a 5x7 glyph that was created in a rotated orientation.
+            // We map the original (col,row) grid into (x,z) with scaling so
+            // the 5x7 content fills the same visual area as normal letters.
+            // Scale factors to convert between dimensions:
+            const scaleX = (CHAR_WIDTH - 1) / (CHAR_HEIGHT - 1); // 4/6
+            const scaleZ = (CHAR_HEIGHT - 1) / (CHAR_WIDTH - 1); // 6/4
 
-              // Map row -> X (horizontal), centered and scaled into -2..+2
-              charX = Math.round((row - Math.floor(CHAR_HEIGHT / 2)) * scaleX);
-              // Depth (vertical axis for glyph) comes from column -> Z (0..6)
-              charZ = Math.round((CHAR_WIDTH - 1 - col) * scaleZ);
-              charY = 0; // center depth (will be rotated around)
-            } else {
-              // Standard mapping for letter glyphs
-              charX = col - Math.floor(CHAR_WIDTH / 2); // -2 to +2 (horizontal position)
-              charY = 0; // Start at center depth
-              charZ = CHAR_HEIGHT - 1 - row; // Flip vertically: row 0 becomes top, row 6 becomes bottom
-            }
+            // Map row -> X (horizontal), centered and scaled into -2..+2
+            charX = Math.round((row - Math.floor(CHAR_HEIGHT / 2)) * scaleX);
+            // Depth (vertical axis for glyph) comes from column -> Z (0..6)
+            charZ = Math.round((CHAR_WIDTH - 1 - col) * scaleZ);
+            charY = 0; // center depth (will be rotated around)
+          } else {
+            // Standard mapping for letter glyphs
+            charX = col - Math.floor(CHAR_WIDTH / 2); // -2 to +2 (horizontal position)
+            charY = 0; // Start at center depth
+            charZ = CHAR_HEIGHT - 1 - row; // Flip vertically: row 0 becomes top, row 6 becomes bottom
+          }
 
           // Apply Z-axis rotation (spinning around vertical Z-axis, keeping letters upright)
           const cosAngle = Math.cos(angle);

@@ -2,11 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import CubeEditor from './components/CubeEditor';
 import Cube3D from './components/Cube3D';
 import HelpOverlay from './components/HelpOverlay';
-import { framesForJAN } from './utils/exporter';
 import { mirrorX } from './utils/drawHelpers';
 
 export default function App() {
-  const [frames, setFrames] = useState(framesForJAN());
+  const [frames, setFrames] = useState([]);
   const [current, setCurrent] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [delayMs, setDelayMs] = useState(200);

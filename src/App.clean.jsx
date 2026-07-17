@@ -4,7 +4,6 @@ import Cube3D from './components/Cube3D';
 import HelpOverlay from './components/HelpOverlay';
 import { requestPort, openPort, writeToPort, closePort } from './utils/serial';
 import {
-  framesForJAN,
   framesToCArray,
   generateHFile,
   generateSketch,
@@ -21,7 +20,7 @@ import {
 } from './utils/drawHelpers';
 
 export default function AppClean() {
-  const [frames, setFrames] = useState(framesForJAN());
+  const [frames, setFrames] = useState([]);
   const [current, setCurrent] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [delayMs, setDelayMs] = useState(300);

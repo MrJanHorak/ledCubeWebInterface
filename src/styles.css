@@ -241,7 +241,7 @@ button:focus {
   outline-offset: 2px;
 }
 input[type='number'] {
-  padding: 6px;
+  padding: 4px;
   border-radius: 6px;
   border: 1px solid #cfcfcf;
 }

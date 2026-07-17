@@ -44127,33 +44127,7 @@ const byte ${name}[${frameCount}][${cols}] = {
     out += "};\n";
     return out;
   }
-  function framesForJAN() {
-    const blank = new Array(64).fill(0);
-    const J = blank.slice();
-    const A = blank.slice();
-    const N = blank.slice();
-    J[8 * 2 + 5] = 126;
-    J[8 * 3 + 5] = 126;
-    J[8 * 2 + 2] = 128;
-    J[8 * 2 + 3] = 128;
-    J[8 * 2 + 4] = 128;
-    J[8 * 2 + 5] = 126;
-    A[8 * 3 + 2] = 254;
-    A[8 * 4 + 2] = 254;
-    A[8 * 3 + 5] = 254;
-    A[8 * 4 + 5] = 254;
-    A[8 * 2 + 3] = 128;
-    A[8 * 2 + 4] = 128;
-    A[8 * 4 + 3] = 16;
-    A[8 * 4 + 4] = 16;
-    N[8 * 3 + 2] = 254;
-    N[8 * 4 + 2] = 254;
-    N[8 * 3 + 5] = 254;
-    N[8 * 4 + 5] = 254;
-    N[8 * 3 + 3] = 66;
-    N[8 * 4 + 4] = 36;
-    return [J, A, N];
-  }
+  
   function generateHFile(name, frames) {
     const arr = framesToCArray(frames, name);
     const guard = `_${name}_H_`.toUpperCase();
@@ -44401,7 +44375,7 @@ void loop(){
 
   // src/App.jsx
   function App() {
-    const [frames, setFrames] = (0, import_react4.useState)(framesForJAN());
+    const [frames, setFrames] = (0, import_react4.useState)([]);
     const [current, setCurrent] = (0, import_react4.useState)(0);
     const [playing, setPlaying] = (0, import_react4.useState)(false);
     const [delayMs, setDelayMs] = (0, import_react4.useState)(300);
