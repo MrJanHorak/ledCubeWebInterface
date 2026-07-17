@@ -54,14 +54,6 @@ export function generateSketch(name, frames) {
 }
 
 // Generate a receiver sketch that accepts frames over Serial with checksum/ACK
-// export function generateStreamingReceiverSketch() {
-//   const sketch = `// Streaming receiver sketch for LED Cube - receives frames over Serial\n\n#include <Arduino.h>\n\nconst uint8_t FRAME_MARKER = 0xF2;\nconst uint8_t ACK = 0xAA;\nconst uint8_t NACK = 0xFF;\n\n// Replace this with your cube display function.\nvoid displayFrame(const uint8_t *frame) {\n  // TODO: map 64-byte frame into your cube wiring and update outputs\n  // Example placeholder: blink onboard LED to indicate frame received\n  digitalWrite(LED_BUILTIN, HIGH);\n  delay(20);\n  digitalWrite(LED_BUILTIN, LOW);\n}\n\nvoid setup() {\n  Serial.begin(38400);\n  pinMode(LED_BUILTIN, OUTPUT);\n}\n\nvoid loop() {\n  if (Serial.available() <= 0) return;\n  int c = Serial.read();\n  if (c != FRAME_MARKER) return;\n\n  // read 64 bytes for frame\n  uint8_t buf[64];\n  unsigned long start = millis();\n  int got = 0;\n  while (got < 64 && (millis() - start) < 1000) {\n    if (Serial.available() > 0) {\n      int v = Serial.read();\n      if (v >= 0) buf[got++] = (uint8_t)v;\n    }
-//   }
-//   if (got < 64) {\n+    Serial.write(NACK);\n+    return;\n+  }\n+\n+  // read checksum\n+  start = millis();\n+  while (Serial.available() == 0 && (millis() - start) < 500) ;\n+  if (Serial.available() == 0) {\n+    Serial.write(NACK);\n+    return;\n+  }\n+  uint8_t checksum = (uint8_t)Serial.read();\n+\n+  uint8_t sum = 0;\n+  for (int i = 0; i < 64; i++) sum += buf[i];\n+  if (sum != checksum) {\n+    Serial.write(NACK);\n+    return;\n+  }\n+\n+  // valid frame - acknowledge and display\n+  Serial.write(ACK);\n+  displayFrame(buf);\n+}\n+`;
-
-//   return sketch;
-// }
-
 export function generateStreamingReceiverSketch() {
   const sketch = `// Streaming receiver sketch for LED Cube - receives frames over Serial
 

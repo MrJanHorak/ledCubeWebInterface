@@ -5,23 +5,6 @@ export default function HelpOverlay({ onClose }) {
     <div className='help-overlay' role='dialog' aria-modal='true'>
       <div className='help-box'>
         <h2>Help — Shortcuts & Tips</h2>
-        <ul>
-          <li>
-            <strong>Space</strong>: Play / Pause
-          </li>
-          <li>
-            <strong>Left / Right</strong>: Prev / Next frame
-          </li>
-          <li>
-            <strong>H</strong> or <strong>?</strong>: Toggle this help
-          </li>
-          <li>
-            <strong>Esc</strong>: Close help
-          </li>
-          <li>
-            <strong>Click a tile</strong>: Jump to frame
-          </li>
-        </ul>
         <h3>Quick Tips</h3>
         <ul>
           <li>Use the timeline tiles to quickly jump between frames.</li>

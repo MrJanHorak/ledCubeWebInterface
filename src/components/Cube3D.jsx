@@ -40,7 +40,7 @@ export default function Cube3D({
       return;
     }
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x20252a);
+    scene.background = new THREE.Color(0x10141a);
 
     const camera = new THREE.PerspectiveCamera(
       50,

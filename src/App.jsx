@@ -40,6 +40,38 @@ export default function App() {
   const playRef = useRef(null);
 
   useEffect(() => {
+    function handleKeyDown(e) {
+      // Don't hijack shortcuts while the person is typing in a field
+      const tag = e.target?.tagName;
+      const isTyping =
+        tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+
+      if (e.key === 'Escape') {
+        if (showHelp) setShowHelp(false);
+        return;
+      }
+
+      if (isTyping) return;
+
+      if (e.key === ' ') {
+        e.preventDefault();
+        setPlaying((p) => !p);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setCurrent((c) => Math.max(0, c - 1));
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setCurrent((c) => Math.min(frames.length - 1, c + 1));
+      } else if (e.key === 'h' || e.key === 'H' || e.key === '?') {
+        e.preventDefault();
+        setShowHelp((h) => !h);
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showHelp, frames.length]);
+
+  useEffect(() => {
     if (!playing) return;
     playRef.current = setInterval(
       () => {
@@ -172,6 +204,30 @@ export default function App() {
     }
   }
 
+  async function disconnectSerial() {
+    if (!serialPort) return;
+    await closePort(serialPort);
+    setSerialPort(null);
+    setConfirmSend(false);
+    showToast('Serial disconnected');
+  }
+
+  // If the cube is unplugged mid-session, don't leave the UI stuck thinking
+  // it's still connected.
+  useEffect(() => {
+    if (!('serial' in navigator)) return;
+    function handleDisconnect(e) {
+      if (e.target === serialPort) {
+        setSerialPort(null);
+        setConfirmSend(false);
+        showToast('Serial device disconnected');
+      }
+    }
+    navigator.serial.addEventListener('disconnect', handleDisconnect);
+    return () =>
+      navigator.serial.removeEventListener('disconnect', handleDisconnect);
+  }, [serialPort]);
+
   async function sendFrames() {
     if (!serialPort) return showToast('No serial port connected');
     setSending(true);
@@ -247,7 +303,10 @@ export default function App() {
               <button onClick={() => setCurrent((c) => Math.max(0, c - 1))}>
                 ◀
               </button>
-              <button onClick={() => setPlaying((p) => !p)}>
+              <button
+                className='btn-primary'
+                onClick={() => setPlaying((p) => !p)}
+              >
                 {playing ? 'Pause' : 'Play'}
               </button>
               <button
@@ -283,7 +342,9 @@ export default function App() {
                 onChange={(e) => setTextInput(e.target.value)}
                 placeholder='Text'
               />
-              <button onClick={startTextScroll}>Scroll Text</button>
+              <button className='btn-primary' onClick={startTextScroll}>
+                Scroll Text
+              </button>
             </div>
             <div style={{ marginBottom: 10 }}>
               <label>
@@ -308,7 +369,9 @@ export default function App() {
                 placeholder='A'
                 style={{ width: 50 }}
               />
-              <button onClick={startGlyphSpin}>Spin Glyph</button>
+              <button className='btn-primary' onClick={startGlyphSpin}>
+                Spin Glyph
+              </button>
               <select
                 value={glyphMode}
                 onChange={(e) => setGlyphMode(e.target.value)}
@@ -331,7 +394,11 @@ export default function App() {
                   <option value='BORED'>🫩 BORED</option>
                   <option value='TONGUE'>😛 TONGUE</option>
                 </select>
-                <button onClick={startEmoticonSpin} style={{ marginLeft: 8 }}>
+                <button
+                  className='btn-primary'
+                  onClick={startEmoticonSpin}
+                  style={{ marginLeft: 8 }}
+                >
                   Spin Emoticon
                 </button>
               </div>
@@ -372,7 +439,9 @@ export default function App() {
                 <div>
                   <button onClick={addBlankFrame}>➕ New Frame</button>
                   <button onClick={duplicateFrame}>📋 Duplicate</button>
-                  <button onClick={deleteFrame}>🗑️ Delete</button>
+                  <button className='btn-danger' onClick={deleteFrame}>
+                    🗑️ Delete
+                  </button>
                   <button onClick={insertTransition}>Insert Transition</button>
                   <label>
                     Steps:{' '}
@@ -440,13 +509,22 @@ export default function App() {
                       Connect
                     </button>
                     <button
+                      onClick={disconnectSerial}
+                      disabled={!serialPort}
+                    >
+                      Disconnect
+                    </button>
+                    <button
+                      className='btn-danger'
                       onClick={() => setConfirmSend(true)}
                       disabled={!serialPort || sending}
                     >
                       Send
                     </button>
                     {confirmSend && (
-                      <button onClick={sendFrames}>Confirm Send</button>
+                      <button className='btn-danger' onClick={sendFrames}>
+                        Confirm Send
+                      </button>
                     )}
                   </div>
                 </div>
