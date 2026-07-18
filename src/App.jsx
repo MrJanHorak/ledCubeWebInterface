@@ -33,6 +33,7 @@ export default function App() {
   const [onionSkin, setOnionSkin] = useState(false);
   const [delayMs, setDelayMs] = useState(300);
   const [serialPort, setSerialPort] = useState(null);
+  const [connecting, setConnecting] = useState(false);
   const [confirmSend, setConfirmSend] = useState(false);
   const [sending, setSending] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
@@ -349,9 +350,20 @@ export default function App() {
     try {
       const port = await requestPort();
       await openPort(port, 38400);
+      // Opening the port toggles DTR on most Arduino Uno/Nano-style boards,
+      // which resets them. If we report "connected" immediately, a fast
+      // Send click can fire the Open command and frame 1 before the
+      // board's bootloader has even handed off to the sketch -- those
+      // bytes are lost, and it looks like the device just isn't
+      // responding. Wait out the reset window first.
+      setConnecting(true);
+      showToast('Connected — waiting for board to finish resetting…');
+      await new Promise((resolve) => setTimeout(resolve, 2000));
       setSerialPort(port);
-      showToast('Connected to Serial');
+      setConnecting(false);
+      showToast('Ready to send');
     } catch (e) {
+      setConnecting(false);
       showToast('Serial connection failed');
     }
   }
@@ -445,8 +457,12 @@ export default function App() {
         if (!acked) {
           throw new Error(
             `Frame ${fi + 1}/${frames.length} failed after ${maxAttempts} attempts (${lastFailReason}). ` +
-              `If this keeps happening on random frames, displayFrame() may be blocking too long ` +
-              `and overflowing the board's serial buffer before it can ACK.`,
+              (lastFailReason === 'no response (timeout)'
+                ? `If this is happening right at frame 1, the board may still be resetting ` +
+                  `(opening the serial port resets most Arduino boards) — try Disconnect, ` +
+                  `wait a couple seconds, then Connect and Send again.`
+                : `If this keeps happening on random frames, displayFrame() may be blocking too long ` +
+                  `and overflowing the board's serial buffer before it can ACK.`),
           );
         }
       }
@@ -844,8 +860,11 @@ export default function App() {
                     flashed — reflash with the Receiver Sketch first.
                   </p>
                   <div className='serial'>
-                    <button onClick={connectSerial} disabled={!!serialPort}>
-                      Connect
+                    <button
+                      onClick={connectSerial}
+                      disabled={!!serialPort || connecting}
+                    >
+                      {connecting ? 'Connecting…' : 'Connect'}
                     </button>
                     <button
                       onClick={disconnectSerial}
