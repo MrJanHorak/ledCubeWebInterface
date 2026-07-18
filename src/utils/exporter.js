@@ -56,6 +56,19 @@ export function generateSketch(name, frames) {
 // Generate a receiver sketch that accepts frames over Serial with checksum/ACK
 export function generateStreamingReceiverSketch() {
   const sketch = `// Streaming receiver sketch for LED Cube - receives frames over Serial
+//
+// IMPORTANT: This sketch must be the one currently flashed on your board
+// for the "Send" button on the website to work. If your board is instead
+// running your normal animation sketch (e.g. an exported ANIM.ino), it is
+// not listening for serial data at all, and "Send" will appear to do
+// nothing.
+//
+// IMPORTANT: displayFrame() below is a placeholder. This tool has no way
+// to know how your specific cube is wired (shift registers, multiplexing,
+// a driver library, etc.), so you must fill it in with whatever code
+// already lights up your cube from a 64-byte frame buffer -- the same
+// logic your working animation sketch uses, just called once per received
+// frame instead of from a baked-in array.
 
 #include <Arduino.h>
 
@@ -63,10 +76,11 @@ const uint8_t FRAME_MARKER = 0xF2;
 const uint8_t ACK = 0xAA;
 const uint8_t NACK = 0xFF;
 
-// Replace this with your cube display function.
+// Replace this with your cube display function. "frame" is 64 bytes;
+// frame[8*y + x] is a column, bit z of that byte is that column's z-th LED.
 void displayFrame(const uint8_t *frame) {
-  // TODO: map 64-byte frame into your cube wiring and update outputs
-  // Example placeholder: blink onboard LED to indicate frame received
+  // TODO: map the 64-byte frame into your cube wiring and update outputs.
+  // Example placeholder: blink onboard LED to indicate a frame was received.
   digitalWrite(LED_BUILTIN, HIGH);
   delay(20);
   digitalWrite(LED_BUILTIN, LOW);
@@ -80,7 +94,7 @@ void setup() {
 void loop() {
   if (Serial.available() <= 0) return;
   int c = Serial.read();
-  if (c != FRAME_MARKER) return;
+  if (c != FRAME_MARKER) return; // also silently skips the open/close (0xAD/0xED) marker bytes
 
   // read 64 bytes for frame
   uint8_t buf[64];
@@ -97,7 +111,8 @@ void loop() {
     return;
   }
 
-  // read checksum
+  // read checksum (sum of the 64 data bytes, mod 256 -- matches what the
+  // website's Send button computes and appends after each frame)
   start = millis();
   while (Serial.available() == 0 && (millis() - start) < 500) ;
   if (Serial.available() == 0) {
@@ -113,9 +128,14 @@ void loop() {
     return;
   }
 
-  // valid frame - acknowledge and display
-  Serial.write(ACK);
+  // valid frame - display it, THEN acknowledge. Acking first would let the
+  // sender fire the next 66-byte frame while this board is still busy
+  // inside displayFrame(); on boards with only a 64-byte serial RX buffer,
+  // any real (non-trivial) displayFrame() implementation can then overflow
+  // that buffer and silently drop bytes, corrupting the *next* frame's
+  // checksum. Displaying first gives the sender correct backpressure.
   displayFrame(buf);
+  Serial.write(ACK);
 }`;
 
   return sketch;

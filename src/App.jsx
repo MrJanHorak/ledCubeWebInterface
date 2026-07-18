@@ -2,7 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import CubeEditor from './components/CubeEditor';
 import Cube3D from './components/Cube3D';
 import HelpOverlay from './components/HelpOverlay';
-import { requestPort, openPort, writeToPort, closePort } from './utils/serial';
+import {
+  requestPort,
+  openPort,
+  writeToPort,
+  closePort,
+  createByteReader,
+} from './utils/serial';
 import {
   framesToCArray,
   generateHFile,
@@ -23,6 +29,8 @@ export default function App() {
   const [frames, setFrames] = useState([]);
   const [current, setCurrent] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [playDirection, setPlayDirection] = useState(1);
+  const [onionSkin, setOnionSkin] = useState(false);
   const [delayMs, setDelayMs] = useState(300);
   const [serialPort, setSerialPort] = useState(null);
   const [confirmSend, setConfirmSend] = useState(false);
@@ -33,11 +41,79 @@ export default function App() {
   const [scrollSides, setScrollSides] = useState(1);
   const [glyphMode, setGlyphMode] = useState('flat');
   const [transitionSteps, setTransitionSteps] = useState(6);
+  const [transitionEasing, setTransitionEasing] = useState('linear');
   const [emoticon, setEmoticon] = useState('SMILE');
   const [activeTab, setActiveTab] = useState('playback');
   const [toast, setToast] = useState(null);
+  const [frameClipboard, setFrameClipboard] = useState(null);
+  const [presets, setPresets] = useState(() => {
+    try {
+      const saved = localStorage.getItem('ledcube-presets');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+  const [presetName, setPresetName] = useState('');
+  const [selectedPreset, setSelectedPreset] = useState('');
+  const [theme, setTheme] = useState(() => {
+    try {
+      const saved = localStorage.getItem('ledcube-theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+    } catch (e) {}
+    return window.matchMedia &&
+      window.matchMedia('(prefers-color-scheme: light)').matches
+      ? 'light'
+      : 'dark';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    try {
+      localStorage.setItem('ledcube-theme', theme);
+    } catch (e) {}
+  }, [theme]);
 
   const playRef = useRef(null);
+  const undoStack = useRef([]);
+  const redoStack = useRef([]);
+  const [historyTick, setHistoryTick] = useState(0); // forces re-render so Undo/Redo buttons enable/disable correctly
+
+  // Use this instead of setFrames directly for any user edit that should be
+  // undoable. Navigation (setCurrent, setPlaying, etc.) is intentionally NOT
+  // tracked -- only the frame data itself.
+  function commitFrames(updater) {
+    setFrames((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      undoStack.current.push(prev);
+      if (undoStack.current.length > 50) undoStack.current.shift();
+      redoStack.current = [];
+      setHistoryTick((t) => t + 1);
+      return next;
+    });
+  }
+
+  function undo() {
+    if (undoStack.current.length === 0) return;
+    setFrames((prev) => {
+      const last = undoStack.current.pop();
+      redoStack.current.push(prev);
+      setHistoryTick((t) => t + 1);
+      setCurrent((c) => Math.min(c, Math.max(0, last.length - 1)));
+      return last;
+    });
+  }
+
+  function redo() {
+    if (redoStack.current.length === 0) return;
+    setFrames((prev) => {
+      const next = redoStack.current.pop();
+      undoStack.current.push(prev);
+      setHistoryTick((t) => t + 1);
+      setCurrent((c) => Math.min(c, Math.max(0, next.length - 1)));
+      return next;
+    });
+  }
 
   useEffect(() => {
     function handleKeyDown(e) {
@@ -52,6 +128,18 @@ export default function App() {
       }
 
       if (isTyping) return;
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        redo();
+        return;
+      }
 
       if (e.key === ' ') {
         e.preventDefault();
@@ -75,12 +163,14 @@ export default function App() {
     if (!playing) return;
     playRef.current = setInterval(
       () => {
-        setCurrent((c) => (c + 1) % frames.length);
+        setCurrent(
+          (c) => (c + playDirection + frames.length) % frames.length,
+        );
       },
       Math.max(50, delayMs),
     );
     return () => clearInterval(playRef.current);
-  }, [playing, delayMs, frames.length]);
+  }, [playing, playDirection, delayMs, frames.length]);
 
   const showToast = (msg, ms = 2500) => {
     setToast(msg);
@@ -88,7 +178,7 @@ export default function App() {
   };
 
   function updateFrame(i, newFrame) {
-    setFrames((f) => {
+    commitFrames((f) => {
       const copy = f.slice();
       copy[i] = newFrame.slice();
       return copy;
@@ -96,12 +186,12 @@ export default function App() {
   }
 
   function addBlankFrame() {
-    setFrames((f) => [...f, new Array(64).fill(0x00)]);
+    commitFrames((f) => [...f, new Array(64).fill(0x00)]);
     setCurrent(frames.length);
   }
 
   function duplicateFrame() {
-    setFrames((f) => {
+    commitFrames((f) => {
       const copy = f.slice();
       copy.splice(current + 1, 0, copy[current].slice());
       return copy;
@@ -109,9 +199,20 @@ export default function App() {
     setCurrent((c) => c + 1);
   }
 
+  function copyFrame() {
+    setFrameClipboard(frames[current].slice());
+    showToast(`Copied frame ${current + 1}`);
+  }
+
+  function pasteFrame() {
+    if (!frameClipboard) return showToast('No frame copied yet');
+    updateFrame(current, frameClipboard.slice());
+    showToast(`Pasted into frame ${current + 1}`);
+  }
+
   function deleteFrame() {
     if (frames.length <= 1) return;
-    setFrames((f) => {
+    commitFrames((f) => {
       const copy = f.slice();
       copy.splice(current, 1);
       return copy;
@@ -119,18 +220,24 @@ export default function App() {
     setCurrent((c) => Math.max(0, c - 1));
   }
 
+  function reverseFrames() {
+    commitFrames((f) => f.slice().reverse());
+    setCurrent((c) => Math.max(0, frames.length - 1 - c));
+    showToast('Frame order reversed');
+  }
+
   function startTextScroll() {
     const txtFrames = generateTextFrames(textInput, scrollSides, 'ltr');
     if (!txtFrames || txtFrames.length === 0)
       return showToast('No text to scroll');
-    setFrames(txtFrames);
+    commitFrames(txtFrames);
     setCurrent(0);
     setActiveTab('playback');
   }
 
   function startGlyphSpin() {
     const glyphFrames = generateGlyphFrames(glyphInput || 'A', 6, glyphMode);
-    setFrames(glyphFrames);
+    commitFrames(glyphFrames);
     setCurrent(0);
     setActiveTab('playback');
   }
@@ -141,7 +248,7 @@ export default function App() {
     const glyphFrames = generateGlyphFrames(emoticon || 'SMILE', steps, '3d');
     if (!glyphFrames || glyphFrames.length === 0)
       return showToast('No emoticon frames');
-    setFrames(glyphFrames);
+    commitFrames(glyphFrames);
     setCurrent(0);
     setActiveTab('playback');
   }
@@ -150,8 +257,13 @@ export default function App() {
     const next = Math.min(current + 1, frames.length - 1);
     const a = frames[current];
     const b = frames[next];
-    const tween = interpolateFrames(a, b, Number(transitionSteps) || 4);
-    setFrames((f) => {
+    const tween = interpolateFrames(
+      a,
+      b,
+      Number(transitionSteps) || 4,
+      transitionEasing,
+    );
+    commitFrames((f) => {
       const copy = f.slice();
       copy.splice(next, 0, ...tween);
       return copy;
@@ -167,7 +279,7 @@ export default function App() {
       try {
         const data = JSON.parse(e.target.result);
         if (Array.isArray(data)) {
-          setFrames(data);
+          commitFrames(data);
           setCurrent(0);
           showToast('Loaded JSON');
         } else {
@@ -178,6 +290,46 @@ export default function App() {
       }
     };
     r.readAsText(f);
+  }
+
+  function persistPresets(next) {
+    setPresets(next);
+    try {
+      localStorage.setItem('ledcube-presets', JSON.stringify(next));
+    } catch (e) {
+      showToast('Could not save preset (storage full or unavailable)');
+    }
+  }
+
+  function savePreset() {
+    const name = presetName.trim();
+    if (!name) return;
+    const next = {
+      ...presets,
+      [name]: { frames, delayMs, savedAt: new Date().toISOString() },
+    };
+    persistPresets(next);
+    setSelectedPreset(name);
+    setPresetName('');
+    showToast(`Saved preset "${name}"`);
+  }
+
+  function loadPreset() {
+    const preset = presets[selectedPreset];
+    if (!preset) return;
+    commitFrames(preset.frames);
+    if (typeof preset.delayMs === 'number') setDelayMs(preset.delayMs);
+    setCurrent(0);
+    showToast(`Loaded preset "${selectedPreset}"`);
+  }
+
+  function deletePreset() {
+    if (!selectedPreset) return;
+    const next = { ...presets };
+    delete next[selectedPreset];
+    persistPresets(next);
+    showToast(`Deleted preset "${selectedPreset}"`);
+    setSelectedPreset('');
   }
 
   function saveJSON() {
@@ -231,23 +383,91 @@ export default function App() {
   async function sendFrames() {
     if (!serialPort) return showToast('No serial port connected');
     setSending(true);
+    let reader = null;
     try {
+      // Read back ACK (0xAA) / NACK (0xFF) per frame so a silent failure
+      // (e.g. the board isn't running the Receiver Sketch) is visible
+      // instead of reporting false success.
+      reader = serialPort.readable.getReader();
+      const readByte = createByteReader(reader);
+
+      // A previous Send that errored out partway can leave stray bytes
+      // sitting in the queue (e.g. an ACK the device sent right as we gave
+      // up). If we don't drain those first, this session's first readByte()
+      // call picks up that leftover byte instead of the real response to
+      // frame 1, misaligning everything that follows.
+      for (let i = 0; i < 200; i++) {
+        try {
+          await readByte(20);
+        } catch (e) {
+          break; // nothing waiting -- queue is empty
+        }
+      }
+
       const openCmd = new Uint8Array(70).fill(0xad);
       await writeToPort(serialPort, openCmd);
-      // Apply mirroring transformation to match physical cube orientation
-      for (const frame of frames) {
-        const transformedFrame = mirrorX(frame);
-        const buf = new Uint8Array(65);
+
+      let totalRetries = 0;
+      const maxAttempts = 3;
+
+      for (let fi = 0; fi < frames.length; fi++) {
+        // Apply mirroring transformation to match physical cube orientation
+        const transformedFrame = mirrorX(frames[fi]);
+        const buf = new Uint8Array(66);
         buf[0] = 0xf2;
-        for (let i = 0; i < 64; i++) buf[i + 1] = transformedFrame[i] || 0;
-        await writeToPort(serialPort, buf);
+        let checksum = 0;
+        for (let i = 0; i < 64; i++) {
+          const b = transformedFrame[i] || 0;
+          buf[i + 1] = b;
+          checksum = (checksum + b) & 0xff;
+        }
+        buf[65] = checksum; // receiver sketch validates this before ACKing
+
+        let acked = false;
+        let lastFailReason = null;
+        for (let attempt = 1; attempt <= maxAttempts && !acked; attempt++) {
+          if (attempt > 1) totalRetries++;
+          await writeToPort(serialPort, buf);
+          try {
+            const ack = await readByte(1500);
+            if (ack === 0xaa) {
+              acked = true;
+            } else if (ack === 0xff) {
+              lastFailReason = 'checksum mismatch';
+            } else {
+              lastFailReason = `unexpected response 0x${ack.toString(16)}`;
+            }
+          } catch (readErr) {
+            lastFailReason = 'no response (timeout)';
+          }
+        }
+
+        if (!acked) {
+          throw new Error(
+            `Frame ${fi + 1}/${frames.length} failed after ${maxAttempts} attempts (${lastFailReason}). ` +
+              `If this keeps happening on random frames, displayFrame() may be blocking too long ` +
+              `and overflowing the board's serial buffer before it can ACK.`,
+          );
+        }
       }
+
       const closeCmd = new Uint8Array(70).fill(0xed);
       await writeToPort(serialPort, closeCmd);
-      showToast('Frames sent');
+      showToast(
+        totalRetries > 0
+          ? `Sent ${frames.length} frame(s) — all acknowledged (${totalRetries} retry${
+              totalRetries === 1 ? '' : 'ies'
+            } needed)`
+          : `Sent ${frames.length} frame(s) — all acknowledged`,
+      );
     } catch (e) {
-      showToast('Send failed');
+      showToast(e.message || 'Send failed');
     } finally {
+      if (reader) {
+        try {
+          reader.releaseLock();
+        } catch (e) {}
+      }
       setSending(false);
       setConfirmSend(false);
     }
@@ -276,6 +496,13 @@ export default function App() {
     <div className='app-full'>
       <header>
         <h1>LED Cube Designer</h1>
+        <button
+          className='help-toggle'
+          onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+          title='Toggle light/dark theme'
+        >
+          {theme === 'dark' ? '☀️' : '🌙'}
+        </button>
         <button className='help-toggle' onClick={() => setShowHelp(true)}>
           ?
         </button>
@@ -283,7 +510,24 @@ export default function App() {
 
       <main>
         <div className='preview-row'>
-          <Cube3D frame={displayFrame} size={1.2} />
+          <Cube3D
+            frame={displayFrame}
+            size={1.2}
+            theme={theme}
+            onionSkin={onionSkin}
+            prevFrame={current > 0 ? frames[current - 1] : null}
+            nextFrame={
+              current < frames.length - 1 ? frames[current + 1] : null
+            }
+          />
+          <label className='onion-toggle'>
+            <input
+              type='checkbox'
+              checked={onionSkin}
+              onChange={(e) => setOnionSkin(e.target.checked)}
+            />
+            Onion skin (show neighboring frames as ghosts)
+          </label>
         </div>
 
         <div className='timeline-row'>
@@ -316,6 +560,16 @@ export default function App() {
               >
                 ▶
               </button>
+              <button
+                onClick={() => setPlayDirection((d) => -d)}
+                title={
+                  playDirection === 1
+                    ? 'Playing forward — click to reverse'
+                    : 'Playing in reverse — click for forward'
+                }
+              >
+                {playDirection === 1 ? '⇥ Forward' : '⇤ Reverse'}
+              </button>
               <span className='time-indicator'>
                 Frame {current + 1} / {frames.length}
               </span>
@@ -328,6 +582,20 @@ export default function App() {
                   style={{ width: 60 }}
                 />
               </label>
+              <button
+                onClick={undo}
+                disabled={undoStack.current.length === 0}
+                title='Undo (Ctrl+Z)'
+              >
+                ↺ Undo
+              </button>
+              <button
+                onClick={redo}
+                disabled={redoStack.current.length === 0}
+                title='Redo (Ctrl+Shift+Z)'
+              >
+                ↻ Redo
+              </button>
             </div>
           </div>
         </div>
@@ -409,6 +677,7 @@ export default function App() {
             <CubeEditor
               frame={frames[current]}
               onChange={(f) => updateFrame(current, f)}
+              showToast={showToast}
             />
           </div>
 
@@ -439,6 +708,10 @@ export default function App() {
                 <div>
                   <button onClick={addBlankFrame}>➕ New Frame</button>
                   <button onClick={duplicateFrame}>📋 Duplicate</button>
+                  <button onClick={copyFrame}>Copy Frame</button>
+                  <button onClick={pasteFrame} disabled={!frameClipboard}>
+                    Paste Frame
+                  </button>
                   <button className='btn-danger' onClick={deleteFrame}>
                     🗑️ Delete
                   </button>
@@ -453,6 +726,18 @@ export default function App() {
                       }
                       style={{ width: 50 }}
                     />
+                  </label>
+                  <label>
+                    Easing:{' '}
+                    <select
+                      value={transitionEasing}
+                      onChange={(e) => setTransitionEasing(e.target.value)}
+                    >
+                      <option value='linear'>Linear</option>
+                      <option value='easeIn'>Ease In</option>
+                      <option value='easeOut'>Ease Out</option>
+                      <option value='easeInOut'>Ease In-Out</option>
+                    </select>
                   </label>
                 </div>
               )}
@@ -489,6 +774,54 @@ export default function App() {
                     Rotate 90°
                   </button>
 
+                  <h4>Sequence</h4>
+                  <button onClick={reverseFrames} disabled={frames.length < 2}>
+                    ⇄ Reverse Frame Order
+                  </button>
+
+                  <h4>Presets</h4>
+                  <p className='muted' style={{ marginTop: -4 }}>
+                    Saved in this browser only (not synced or shared).
+                  </p>
+                  <div className='files'>
+                    <input
+                      type='text'
+                      value={presetName}
+                      onChange={(e) => setPresetName(e.target.value)}
+                      placeholder='Preset name'
+                      style={{ width: 120 }}
+                    />
+                    <button onClick={savePreset} disabled={!presetName.trim()}>
+                      Save Preset
+                    </button>
+                  </div>
+                  <div className='files' style={{ marginTop: 8 }}>
+                    <select
+                      value={selectedPreset}
+                      onChange={(e) => setSelectedPreset(e.target.value)}
+                    >
+                      <option value=''>— choose a preset —</option>
+                      {Object.keys(presets).map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={loadPreset}
+                      disabled={!selectedPreset}
+                    >
+                      Load
+                    </button>
+                    <button
+                      className='btn-danger'
+                      onClick={deletePreset}
+                      disabled={!selectedPreset}
+                    >
+                      Delete
+                    </button>
+                  </div>
+
                   <h4>Files</h4>
                   <div className='files'>
                     <label>
@@ -504,6 +837,12 @@ export default function App() {
                   </div>
 
                   <h4>Serial</h4>
+                  <p className='muted' style={{ marginTop: -4 }}>
+                    "Send" streams frames live to a board running the{' '}
+                    <strong>Receiver Sketch</strong> (Export tab). It won't
+                    do anything if your board has a different sketch
+                    flashed — reflash with the Receiver Sketch first.
+                  </p>
                   <div className='serial'>
                     <button onClick={connectSerial} disabled={!!serialPort}>
                       Connect

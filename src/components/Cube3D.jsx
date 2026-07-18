@@ -6,6 +6,10 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 export default function Cube3D({
   frame,
   size = 1.2,
+  theme = 'dark',
+  prevFrame = null,
+  nextFrame = null,
+  onionSkin = false,
   onError = null,
   onReady = null,
 }) {
@@ -40,7 +44,9 @@ export default function Cube3D({
       return;
     }
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x10141a);
+    scene.background = new THREE.Color(
+      theme === 'light' ? 0xe4e7eb : 0x10141a
+    );
 
     const camera = new THREE.PerspectiveCamera(
       50,
@@ -257,9 +263,10 @@ export default function Cube3D({
           mount.removeChild(renderer.domElement);
       } catch (e) {}
     };
-  }, [size]);
+  }, [size, theme]);
 
-  // update lights based on frame
+  // update lights based on frame (plus faint onion-skin ghosts of the
+  // adjacent frames, for cells that are off in the current frame)
   useEffect(() => {
     if (!frame || !objectsRef.current.length) return;
     // objectsRef order: for z 0..7, y 0..7, x 0..7? We added order z,y,x
@@ -276,16 +283,28 @@ export default function Cube3D({
             if (bit) {
               mesh.material.color.set(0xffcc00);
               mesh.material.emissive.set(0xff7700);
+              mesh.material.emissiveIntensity = 1.2;
+            } else if (onionSkin && nextFrame && (nextFrame[idx] || 0) & (1 << z)) {
+              // about to turn on next frame -- faint cyan preview
+              mesh.material.color.set(0x123842);
+              mesh.material.emissive.set(0x1fb8d9);
+              mesh.material.emissiveIntensity = 0.55;
+            } else if (onionSkin && prevFrame && (prevFrame[idx] || 0) & (1 << z)) {
+              // was on in the previous frame -- faint magenta afterimage
+              mesh.material.color.set(0x3a2036);
+              mesh.material.emissive.set(0xc23fa0);
+              mesh.material.emissiveIntensity = 0.4;
             } else {
               mesh.material.color.set(0x222222);
               mesh.material.emissive.set(0x000000);
+              mesh.material.emissiveIntensity = 1;
             }
           }
           i++;
         }
       }
     }
-  }, [frame]);
+  }, [frame, prevFrame, nextFrame, onionSkin]);
 
   // show error text if WebGL or rendering failed
   if (error) {

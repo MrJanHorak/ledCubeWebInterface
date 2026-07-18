@@ -41,11 +41,28 @@ export function rotateZ90(frame) {
   return out;
 }
 
-export function interpolateFrames(a, b, steps) {
-  // simple linear interpolation per bit per column: choose nearest step by threshold
+// Deterministic pseudo-random threshold per (byteIndex, bit), 0..1.
+// Same inputs always produce the same threshold, so re-running a transition
+// is repeatable, but different LEDs flip at different points in the
+// transition instead of all flipping at once.
+function ditherThreshold(i, z) {
+  const x = Math.sin(i * 12.9898 + z * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+export const EASINGS = {
+  linear: (t) => t,
+  easeIn: (t) => t * t,
+  easeOut: (t) => t * (2 - t),
+  easeInOut: (t) => (t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t),
+};
+
+export function interpolateFrames(a, b, steps, easing = 'linear') {
+  const ease = EASINGS[easing] || EASINGS.linear;
   const res = [];
   for (let s = 1; s <= steps; s++) {
     const t = s / (steps + 1);
+    const et = ease(t);
     const frame = new Array(64).fill(0);
     for (let i = 0; i < 64; i++) {
       const va = a[i] || 0;
@@ -54,8 +71,15 @@ export function interpolateFrames(a, b, steps) {
       for (let z = 0; z < 8; z++) {
         const onA = (va >> z) & 1;
         const onB = (vb >> z) & 1;
-        const val = onA * (1 - t) + onB * t;
-        if (val >= 0.5) out |= 1 << z;
+        let bit;
+        if (onA === onB) {
+          bit = onA;
+        } else {
+          // hold the original value until this LED's own threshold is
+          // crossed, then switch to the target value
+          bit = et >= ditherThreshold(i, z) ? onB : onA;
+        }
+        if (bit) out |= 1 << z;
       }
       frame[i] = out;
     }

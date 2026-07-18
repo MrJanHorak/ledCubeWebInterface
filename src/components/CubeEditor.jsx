@@ -1,23 +1,83 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
-// Props: frame (array of 64 bytes), onChange(newFrame)
-export default function CubeEditor({ frame, onChange }) {
+// Props: frame (array of 64 bytes), onChange(newFrame), showToast(msg)
+export default function CubeEditor({ frame, onChange, showToast }) {
   // layer now represents the front-to-back slice (y index 0..7)
   const [layer, setLayer] = useState(0);
   const [local, setLocal] = useState(
     frame ? frame.slice() : new Array(64).fill(0x00)
   );
+  const [layerClipboard, setLayerClipboard] = useState(null);
+
+  const localRef = useRef(local);
+  const paintingRef = useRef(false);
+  const paintValueRef = useRef(false);
 
   useEffect(() => {
     setLocal(frame ? frame.slice() : new Array(64).fill(0x00));
   }, [frame]);
 
-  // toggle a cell in the currently selected layer (UI layer). Internally map
-  // UI layer to frame Y index so that UI layer 0 => front (y=7), layer 7 => back (y=0).
+  useEffect(() => {
+    localRef.current = local;
+  }, [local]);
+
+  // Click-and-drag painting: mousedown on a cell decides the value (the
+  // opposite of that cell's current state) and every cell the pointer
+  // crosses while held gets set to that same value. onChange only fires
+  // once, on release, so a whole drag stroke is a single undo step.
+  useEffect(() => {
+    function finishPaint() {
+      if (paintingRef.current) {
+        paintingRef.current = false;
+        if (onChange) onChange(localRef.current);
+      }
+    }
+    window.addEventListener('mouseup', finishPaint);
+    window.addEventListener('touchend', finishPaint);
+    return () => {
+      window.removeEventListener('mouseup', finishPaint);
+      window.removeEventListener('touchend', finishPaint);
+    };
+  }, [onChange]);
+
+  const notify = (msg) => {
+    if (showToast) showToast(msg);
+  };
+
+  function applyCell(x, z, value) {
+    const mappedY = 7 - layer;
+    const idx = 8 * mappedY + x;
+    const mask = 1 << z;
+    setLocal((prev) => {
+      const copy = prev.slice();
+      if (value) copy[idx] |= mask;
+      else copy[idx] &= ~mask;
+      return copy;
+    });
+  }
+
+  function startPaint(x, z) {
+    const mappedY = 7 - layer;
+    const idx = 8 * mappedY + x;
+    const mask = 1 << z;
+    const currentlyOn = (local[idx] & mask) !== 0;
+    const target = !currentlyOn;
+    paintingRef.current = true;
+    paintValueRef.current = target;
+    applyCell(x, z, target);
+  }
+
+  function continuePaint(x, z) {
+    if (!paintingRef.current) return;
+    applyCell(x, z, paintValueRef.current);
+  }
+
+  // Single explicit toggle, used for keyboard access (Enter/Space) where
+  // there's no drag -- commits immediately as its own undo step.
   function toggle(x, z) {
     const mappedY = 7 - layer;
-    const idx = 8 * mappedY + x; // frame index uses y (depth) as the array row
-    const mask = 1 << z; // bits are Z
+    const idx = 8 * mappedY + x;
+    const mask = 1 << z;
     const copy = local.slice();
     copy[idx] = copy[idx] ^ mask;
     setLocal(copy);
@@ -41,6 +101,25 @@ export default function CubeEditor({ frame, onChange }) {
     for (let x = 0; x < 8; x++) copy[8 * mappedY + x] = 0x00;
     setLocal(copy);
     onChange(copy);
+    notify('Layer cleared');
+  }
+
+  function copyLayer() {
+    const mappedY = 7 - layer;
+    const bytes = [];
+    for (let x = 0; x < 8; x++) bytes.push(local[8 * mappedY + x] || 0);
+    setLayerClipboard(bytes);
+    notify(`Copied layer ${layer + 1}`);
+  }
+
+  function pasteLayer() {
+    if (!layerClipboard) return notify('No layer copied yet');
+    const copy = local.slice();
+    const mappedY = 7 - layer;
+    for (let x = 0; x < 8; x++) copy[8 * mappedY + x] = layerClipboard[x];
+    setLocal(copy);
+    onChange(copy);
+    notify(`Pasted into layer ${layer + 1}`);
   }
 
   return (
@@ -66,8 +145,18 @@ export default function CubeEditor({ frame, onChange }) {
         <button onClick={setLayerAllOn} title='Turn this layer on'>
           All On
         </button>
-        <button onClick={setLayerAllOff} title='Turn this layer off'>
-          All Off
+        <button onClick={setLayerAllOff} title='Clear this layer'>
+          Clear Layer
+        </button>
+        <button onClick={copyLayer} title='Copy this layer to paste elsewhere'>
+          📋 Copy Layer
+        </button>
+        <button
+          onClick={pasteLayer}
+          disabled={!layerClipboard}
+          title='Paste the copied layer onto this depth'
+        >
+          Paste Layer
         </button>
       </div>
 
@@ -75,6 +164,7 @@ export default function CubeEditor({ frame, onChange }) {
         className='grid'
         role='grid'
         aria-label={`Front-to-back layer ${layer + 1} editor`}
+        onDragStart={(e) => e.preventDefault()}
       >
         {/* rows are Z (0..7 top->bottom), columns are X (0..7 left->right) */}
         {/* Flip Z order to match 3D display orientation */}
@@ -93,9 +183,17 @@ export default function CubeEditor({ frame, onChange }) {
                   role='gridcell'
                   tabIndex={0}
                   aria-checked={on}
-                  title={`Toggle x=${x} z=${flippedZ} y=${mappedY + 1}`}
+                  title={`Toggle x=${x} z=${flippedZ} y=${mappedY + 1} (click-drag to paint several)`}
                   className={on ? 'cell on' : 'cell'}
-                  onClick={() => toggle(x, flippedZ)}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    startPaint(x, flippedZ);
+                  }}
+                  onMouseEnter={() => continuePaint(x, flippedZ)}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    startPaint(x, flippedZ);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
