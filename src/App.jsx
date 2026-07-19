@@ -24,6 +24,24 @@ import {
   rotateZ90,
   interpolateFrames,
 } from './utils/drawHelpers';
+import {
+  generateSphereFrames,
+  generateRainFrames,
+  generateScannerFrames,
+  generateSparkleFrames,
+  generateWireframeCubeFrames,
+  generateSpiralFrames,
+  generateBouncingBallFrames,
+  generateFireworksFrames,
+  generateExpandingCubeFrames,
+  generateWaveFrames,
+  generateSnakeFrames,
+  generateFillDrainFrames,
+  generateCheckerboardFrames,
+  generateDiagonalScannerFrames,
+  generateEdgeChaseFrames,
+  generateOrbitFrames,
+} from './utils/patterns';
 
 export default function App() {
   const [frames, setFrames] = useState([]);
@@ -32,6 +50,7 @@ export default function App() {
   const [playDirection, setPlayDirection] = useState(1);
   const [onionSkin, setOnionSkin] = useState(false);
   const [appendMode, setAppendMode] = useState(true);
+  const [scannerAxis, setScannerAxis] = useState('z');
   const [delayMs, setDelayMs] = useState(300);
   const [serialPort, setSerialPort] = useState(null);
   const [connecting, setConnecting] = useState(false);
@@ -288,6 +307,58 @@ export default function App() {
     if (!glyphFrames || glyphFrames.length === 0)
       return showToast('No emoticon frames');
     appendOrReplaceFrames(glyphFrames, 'Spin Emoticon');
+  }
+
+  function startSpherePattern() {
+    appendOrReplaceFrames(generateSphereFrames(20), 'Sphere');
+  }
+  function startRainPattern() {
+    appendOrReplaceFrames(generateRainFrames(30, 0.15), 'Rain');
+  }
+  function startScannerPattern() {
+    appendOrReplaceFrames(generateScannerFrames(scannerAxis, 16), 'Scanner');
+  }
+  function startSparklePattern() {
+    appendOrReplaceFrames(generateSparkleFrames(30, 0.12), 'Sparkle');
+  }
+  function startWireframeCubePattern() {
+    appendOrReplaceFrames(generateWireframeCubeFrames(24), 'Wireframe Cube');
+  }
+  function startSpiralPattern() {
+    appendOrReplaceFrames(generateSpiralFrames(32, 3), 'Spiral');
+  }
+  function startBouncingBallPattern() {
+    appendOrReplaceFrames(generateBouncingBallFrames(40), 'Bouncing Ball');
+  }
+  function startFireworksPattern() {
+    appendOrReplaceFrames(generateFireworksFrames(3, 10), 'Fireworks');
+  }
+  function startExpandingCubePattern() {
+    appendOrReplaceFrames(generateExpandingCubeFrames(20), 'Expanding Cube');
+  }
+  function startWavePattern() {
+    appendOrReplaceFrames(generateWaveFrames(32), 'Wave');
+  }
+  function startSnakePattern() {
+    appendOrReplaceFrames(generateSnakeFrames(40, 6), 'Snake');
+  }
+  function startFillDrainPattern() {
+    appendOrReplaceFrames(generateFillDrainFrames(2), 'Fill / Drain');
+  }
+  function startCheckerboardPattern() {
+    appendOrReplaceFrames(generateCheckerboardFrames(20), 'Checkerboard');
+  }
+  function startDiagonalScannerPattern() {
+    appendOrReplaceFrames(
+      generateDiagonalScannerFrames(20),
+      'Diagonal Scanner',
+    );
+  }
+  function startEdgeChasePattern() {
+    appendOrReplaceFrames(generateEdgeChaseFrames(32, 3), 'Edge Chase');
+  }
+  function startOrbitPattern() {
+    appendOrReplaceFrames(generateOrbitFrames(32, 0.5), 'Orbit');
   }
 
   function insertTransition() {
@@ -668,85 +739,170 @@ export default function App() {
         </div>
 
         <div className='centered-row'>
-          <div className='text-animate card-panel'>
-            <h4>Text & Glyph Animation</h4>
-            <label
-              className='onion-toggle'
-              style={{ marginTop: 0, marginBottom: 12 }}
-            >
-              <input
-                type='checkbox'
-                checked={appendMode}
-                onChange={(e) => setAppendMode(e.target.checked)}
-              />
-              Add to end of timeline (unchecked replaces it)
-            </label>
-            <div style={{ marginBottom: 10 }}>
-              <input
-                type='text'
-                value={textInput}
-                onChange={(e) => setTextInput(e.target.value)}
-                placeholder='Text'
-              />
-              <button className='btn-primary' onClick={startTextScroll}>
-                Scroll Text
-              </button>
-            </div>
-            <div style={{ marginBottom: 10 }}>
-              <label>
-                Number of Sides to display text:{' '}
+          <div className='left-column'>
+            <div className='text-animate card-panel'>
+              <h4>Text & Glyph Animation</h4>
+              <label
+                className='onion-toggle'
+                style={{ marginTop: 0, marginBottom: 12 }}
+              >
                 <input
-                  type='number'
-                  min={1}
-                  max={4}
-                  value={scrollSides}
-                  onChange={(e) => setScrollSides(Number(e.target.value))}
+                  type='checkbox'
+                  checked={appendMode}
+                  onChange={(e) => setAppendMode(e.target.checked)}
+                />
+                Add to end of timeline
+              </label>
+              <div style={{ marginBottom: 10 }}>
+                <input
+                  type='text'
+                  value={textInput}
+                  onChange={(e) => setTextInput(e.target.value)}
+                  placeholder='Text'
+                />
+                <button className='btn-primary' onClick={startTextScroll}>
+                  Scroll Text
+                </button>
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label>
+                  Number of Sides to display text:{' '}
+                  <input
+                    type='number'
+                    min={1}
+                    max={4}
+                    value={scrollSides}
+                    onChange={(e) => setScrollSides(Number(e.target.value))}
+                    style={{ width: 50 }}
+                  />
+                </label>
+              </div>
+              <div>
+                <input
+                  type='text'
+                  value={glyphInput}
+                  onChange={(e) =>
+                    setGlyphInput(e.target.value.slice(0, 1).toUpperCase())
+                  }
+                  placeholder='A'
                   style={{ width: 50 }}
                 />
-              </label>
-            </div>
-            <div>
-              <input
-                type='text'
-                value={glyphInput}
-                onChange={(e) =>
-                  setGlyphInput(e.target.value.slice(0, 1).toUpperCase())
-                }
-                placeholder='A'
-                style={{ width: 50 }}
-              />
-              <button className='btn-primary' onClick={startGlyphSpin}>
-                Spin Glyph
-              </button>
-              <select
-                value={glyphMode}
-                onChange={(e) => setGlyphMode(e.target.value)}
-              >
-                <option value='flat'>Flat</option>
-                <option value='3d'>3D</option>
-              </select>
-              {/* Emoticon selector - uses 3D spinner */}
-              <div style={{ marginTop: 8 }}>
-                <select
-                  value={emoticon}
-                  onChange={(e) => setEmoticon(e.target.value)}
-                >
-                  <option value='SMILE'>🙂 SMILE</option>
-                  <option value='SAD'>☹️ SAD</option>
-                  <option value='WINK'>😉 WINK</option>
-                  <option value='HEART'>💗 HEART</option>
-                  <option value='SHOCK'>😮 SHOCK</option>
-                  <option value='ANGRY'>😡 ANGRY</option>
-                  <option value='BORED'>🫩 BORED</option>
-                  <option value='TONGUE'>😛 TONGUE</option>
-                </select>
-                <button
-                  className='btn-primary'
-                  onClick={startEmoticonSpin}
-                  style={{ marginLeft: 8 }}
-                >
-                  Spin Emoticon
+                <button className='btn-primary' onClick={startGlyphSpin}>
+                  Spin Glyph
                 </button>
+                <select
+                  value={glyphMode}
+                  onChange={(e) => setGlyphMode(e.target.value)}
+                >
+                  <option value='flat'>Flat</option>
+                  <option value='3d'>3D</option>
+                </select>
+                {/* Emoticon selector - uses 3D spinner */}
+                <div style={{ marginTop: 8 }}>
+                  <select
+                    value={emoticon}
+                    onChange={(e) => setEmoticon(e.target.value)}
+                  >
+                    <optgroup label='Emoticons'>
+                      <option value='SMILE'>🙂 SMILE</option>
+                      <option value='SAD'>☹️ SAD</option>
+                      <option value='WINK'>😉 WINK</option>
+                      <option value='HEART'>💗 HEART</option>
+                      <option value='SHOCK'>😮 SHOCK</option>
+                      <option value='ANGRY'>😡 ANGRY</option>
+                      <option value='BORED'>🫩 BORED</option>
+                      <option value='TONGUE'>😛 TONGUE</option>
+                    </optgroup>
+                    <optgroup label='Arrows'>
+                      <option value='ARROW_UP'>⬆️ ARROW UP</option>
+                      <option value='ARROW_DOWN'>⬇️ ARROW DOWN</option>
+                      <option value='ARROW_LEFT'>⬅️ ARROW LEFT</option>
+                      <option value='ARROW_RIGHT'>➡️ ARROW RIGHT</option>
+                    </optgroup>
+                    <optgroup label='Card Suits'>
+                      <option value='SPADE'>♠️ SPADE</option>
+                      <option value='DIAMOND'>♦️ DIAMOND</option>
+                      <option value='CLUB'>♣️ CLUB</option>
+                    </optgroup>
+                    <optgroup label='Seasonal'>
+                      <option value='SNOWFLAKE'>❄️ SNOWFLAKE</option>
+                      <option value='TREE'>🎄 TREE</option>
+                      <option value='PUMPKIN'>🎃 PUMPKIN</option>
+                    </optgroup>
+                    <optgroup label='Retro'>
+                      <option value='GHOST'>👻 GHOST</option>
+                      <option value='PACMAN'>🟡 PAC-MAN</option>
+                      <option value='INVADER'>👾 INVADER</option>
+                    </optgroup>
+                  </select>
+                  <button
+                    className='btn-primary'
+                    onClick={startEmoticonSpin}
+                    style={{ marginLeft: 8 }}
+                  >
+                    Spin Selected Icon
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className='card-panel'>
+              <h4>Patterns</h4>
+              <p className='muted' style={{ marginTop: -4 }}>
+              </p>
+              <div className='files'>
+                <button onClick={startSpherePattern}>💠 Sphere</button>
+                <button onClick={startRainPattern}>🌧️ Rain</button>
+              </div>
+              <div className='files' style={{ marginTop: 8 }}>
+                <select
+                  value={scannerAxis}
+                  onChange={(e) => setScannerAxis(e.target.value)}
+                >
+                  <option value='z'>Z axis</option>
+                  <option value='x'>X axis</option>
+                  <option value='y'>Y axis</option>
+                </select>
+                <button onClick={startScannerPattern}>📡 Scanner</button>
+                <button onClick={startSparklePattern}>✨ Sparkle</button>
+              </div>
+              <div className='files' style={{ marginTop: 8 }}>
+                <button onClick={startWireframeCubePattern}>
+                  🧊 Wireframe Cube
+                </button>
+                <button onClick={startSpiralPattern}>🌀 Spiral</button>
+              </div>
+              <div className='files' style={{ marginTop: 8 }}>
+                <button onClick={startBouncingBallPattern}>
+                  🏓 Bouncing Ball
+                </button>
+                <button onClick={startFireworksPattern}>🎆 Fireworks</button>
+              </div>
+              <div className='files' style={{ marginTop: 8 }}>
+                <button onClick={startExpandingCubePattern}>
+                  📦 Expanding Cube
+                </button>
+                <button onClick={startWavePattern}>🌊 Wave</button>
+              </div>
+              <div className='files' style={{ marginTop: 8 }}>
+                <button onClick={startSnakePattern}>🐍 Snake</button>
+                <button onClick={startFillDrainPattern}>
+                  🥤 Fill / Drain
+                </button>
+              </div>
+              <div className='files' style={{ marginTop: 8 }}>
+                <button onClick={startCheckerboardPattern}>
+                  🏁 Checkerboard
+                </button>
+                <button onClick={startDiagonalScannerPattern}>
+                  ↗️ Diagonal Scanner
+                </button>
+              </div>
+              <div className='files' style={{ marginTop: 8 }}>
+                <button onClick={startEdgeChasePattern}>
+                  🔗 Edge Chase
+                </button>
+                <button onClick={startOrbitPattern}>🛰️ Orbit</button>
               </div>
             </div>
           </div>
@@ -859,11 +1015,6 @@ export default function App() {
                   <button className='btn-danger' onClick={clearAllFrames}>
                     🗑️ Clear All Frames
                   </button>
-                  <p className='muted' style={{ marginTop: 4 }}>
-                    Scroll Text / Spin Glyph / Spin Emoticon now add to the
-                    end of the timeline by default — use this to start a
-                    fresh animation instead. (Undo works here too.)
-                  </p>
 
                   <h4>Presets</h4>
                   <p className='muted' style={{ marginTop: -4 }}>
