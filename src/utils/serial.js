@@ -27,31 +27,82 @@ export async function closePort(port) {
 }
 
 // Wraps a ReadableStreamDefaultReader so callers can pull one byte at a time
-// (buffering any extra bytes that arrive in the same chunk), with a timeout.
+// with a timeout, WITHOUT ever having more than one reader.read() call
+// in flight. This matters: reader.read() queues concurrent calls and
+// resolves them strictly in request order. A naive Promise.race([read(),
+// timeout]) leaves the raw read() pending forever when it "loses" the
+// race, and that abandoned read silently steals the *next* real byte that
+// arrives -- every timeout permanently misaligns all subsequent reads.
+// Instead, one background loop is the only thing that ever calls
+// reader.read(); readByte() just waits on an in-memory queue it fills.
 export function createByteReader(reader) {
-  let leftover = new Uint8Array(0);
-  return async function readByte(timeoutMs = 1500) {
-    if (leftover.length > 0) {
-      const b = leftover[0];
-      leftover = leftover.slice(1);
-      return b;
-    }
-    let timeoutId;
-    const timeout = new Promise((_, reject) => {
-      timeoutId = setTimeout(
-        () => reject(new Error('Serial read timed out')),
-        timeoutMs,
-      );
-    });
+  const queue = [];
+  let waiters = [];
+  let streamError = null;
+  let streamDone = false;
+
+  function wake() {
+    const ws = waiters;
+    waiters = [];
+    ws.forEach((w) => w());
+  }
+
+  (async function pump() {
     try {
-      const result = await Promise.race([reader.read(), timeout]);
-      if (result.done) throw new Error('Serial port closed');
-      const chunk = result.value;
-      if (!chunk || chunk.length === 0) return readByte(timeoutMs);
-      leftover = chunk.slice(1);
-      return chunk[0];
-    } finally {
-      clearTimeout(timeoutId);
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          streamDone = true;
+          wake();
+          return;
+        }
+        if (value && value.length) {
+          for (let i = 0; i < value.length; i++) queue.push(value[i]);
+          wake();
+        }
+      }
+    } catch (err) {
+      streamError = err;
+      wake();
     }
+  })();
+
+  return function readByte(timeoutMs = 1500) {
+    if (queue.length > 0) return Promise.resolve(queue.shift());
+    if (streamError) return Promise.reject(streamError);
+    if (streamDone) return Promise.reject(new Error('Serial port closed'));
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        waiters = waiters.filter((w) => w !== onWake);
+        reject(new Error('Serial read timed out'));
+      }, timeoutMs);
+
+      function onWake() {
+        if (settled) return;
+        if (queue.length > 0) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(queue.shift());
+        } else if (streamError) {
+          settled = true;
+          clearTimeout(timer);
+          reject(streamError);
+        } else if (streamDone) {
+          settled = true;
+          clearTimeout(timer);
+          reject(new Error('Serial port closed'));
+        } else {
+          waiters.push(onWake);
+        }
+      }
+
+      waiters.push(onWake);
+    });
   };
 }

@@ -31,6 +31,7 @@ export default function App() {
   const [playing, setPlaying] = useState(false);
   const [playDirection, setPlayDirection] = useState(1);
   const [onionSkin, setOnionSkin] = useState(false);
+  const [appendMode, setAppendMode] = useState(true);
   const [delayMs, setDelayMs] = useState(300);
   const [serialPort, setSerialPort] = useState(null);
   const [connecting, setConnecting] = useState(false);
@@ -227,20 +228,57 @@ export default function App() {
     showToast('Frame order reversed');
   }
 
+  function clearAllFrames() {
+    commitFrames([new Array(64).fill(0x00)]);
+    setCurrent(0);
+    showToast('Timeline cleared (Undo to bring it back)');
+  }
+
+  // Roughly where a typical small board (e.g. an Uno's 32KB flash) starts
+  // getting tight once the sketch code itself is counted too. This is a
+  // soft heads-up, not a hard limit -- nothing in this app stops you from
+  // going well past it.
+  const FRAME_COUNT_SOFT_WARNING = 300;
+
+  function appendOrReplaceFrames(newFrames, label) {
+    if (!newFrames || newFrames.length === 0) {
+      showToast(`${label}: nothing generated`);
+      return;
+    }
+    let totalAfter;
+    if (appendMode) {
+      const insertAt = frames.length;
+      commitFrames((f) => [...f, ...newFrames]);
+      totalAfter = frames.length + newFrames.length;
+      setCurrent(insertAt);
+    } else {
+      commitFrames(newFrames);
+      totalAfter = newFrames.length;
+      setCurrent(0);
+    }
+    setActiveTab('playback');
+
+    const base = appendMode
+      ? `${label}: added ${newFrames.length} frame(s) — ${totalAfter} total`
+      : `${label}: replaced timeline with ${newFrames.length} frame(s)`;
+    showToast(
+      totalAfter > FRAME_COUNT_SOFT_WARNING
+        ? `${base}. That's a lot of frames — may not fit a small board's flash memory once exported.`
+        : base,
+      totalAfter > FRAME_COUNT_SOFT_WARNING ? 4500 : 2500,
+    );
+  }
+
   function startTextScroll() {
     const txtFrames = generateTextFrames(textInput, scrollSides, 'ltr');
     if (!txtFrames || txtFrames.length === 0)
       return showToast('No text to scroll');
-    commitFrames(txtFrames);
-    setCurrent(0);
-    setActiveTab('playback');
+    appendOrReplaceFrames(txtFrames, 'Scroll Text');
   }
 
   function startGlyphSpin() {
     const glyphFrames = generateGlyphFrames(glyphInput || 'A', 6, glyphMode);
-    commitFrames(glyphFrames);
-    setCurrent(0);
-    setActiveTab('playback');
+    appendOrReplaceFrames(glyphFrames, 'Spin Glyph');
   }
 
   function startEmoticonSpin() {
@@ -249,9 +287,7 @@ export default function App() {
     const glyphFrames = generateGlyphFrames(emoticon || 'SMILE', steps, '3d');
     if (!glyphFrames || glyphFrames.length === 0)
       return showToast('No emoticon frames');
-    commitFrames(glyphFrames);
-    setCurrent(0);
-    setActiveTab('playback');
+    appendOrReplaceFrames(glyphFrames, 'Spin Emoticon');
   }
 
   function insertTransition() {
@@ -403,18 +439,27 @@ export default function App() {
       reader = serialPort.readable.getReader();
       const readByte = createByteReader(reader);
 
+      // Drains any bytes sitting in the queue right now (e.g. a stray
+      // leftover from a previous failed send, or a late response to an
+      // attempt we already gave up on) so the next readByte() call can't
+      // pick up something stale instead of the response it's actually
+      // waiting for.
+      async function drainStale() {
+        for (let i = 0; i < 200; i++) {
+          try {
+            await readByte(20);
+          } catch (e) {
+            break; // nothing waiting -- queue is empty
+          }
+        }
+      }
+
       // A previous Send that errored out partway can leave stray bytes
       // sitting in the queue (e.g. an ACK the device sent right as we gave
       // up). If we don't drain those first, this session's first readByte()
       // call picks up that leftover byte instead of the real response to
       // frame 1, misaligning everything that follows.
-      for (let i = 0; i < 200; i++) {
-        try {
-          await readByte(20);
-        } catch (e) {
-          break; // nothing waiting -- queue is empty
-        }
-      }
+      await drainStale();
 
       const openCmd = new Uint8Array(70).fill(0xad);
       await writeToPort(serialPort, openCmd);
@@ -438,7 +483,13 @@ export default function App() {
         let acked = false;
         let lastFailReason = null;
         for (let attempt = 1; attempt <= maxAttempts && !acked; attempt++) {
-          if (attempt > 1) totalRetries++;
+          if (attempt > 1) {
+            totalRetries++;
+            // give a slow-but-real response a moment to land, then discard
+            // it -- otherwise it could get misattributed to this new
+            // attempt's write below.
+            await drainStale();
+          }
           await writeToPort(serialPort, buf);
           try {
             const ack = await readByte(1500);
@@ -619,6 +670,17 @@ export default function App() {
         <div className='centered-row'>
           <div className='text-animate card-panel'>
             <h4>Text & Glyph Animation</h4>
+            <label
+              className='onion-toggle'
+              style={{ marginTop: 0, marginBottom: 12 }}
+            >
+              <input
+                type='checkbox'
+                checked={appendMode}
+                onChange={(e) => setAppendMode(e.target.checked)}
+              />
+              Add to end of timeline (unchecked replaces it)
+            </label>
             <div style={{ marginBottom: 10 }}>
               <input
                 type='text'
@@ -794,6 +856,14 @@ export default function App() {
                   <button onClick={reverseFrames} disabled={frames.length < 2}>
                     ⇄ Reverse Frame Order
                   </button>
+                  <button className='btn-danger' onClick={clearAllFrames}>
+                    🗑️ Clear All Frames
+                  </button>
+                  <p className='muted' style={{ marginTop: 4 }}>
+                    Scroll Text / Spin Glyph / Spin Emoticon now add to the
+                    end of the timeline by default — use this to start a
+                    fresh animation instead. (Undo works here too.)
+                  </p>
 
                   <h4>Presets</h4>
                   <p className='muted' style={{ marginTop: -4 }}>
