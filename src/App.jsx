@@ -499,115 +499,157 @@ export default function App() {
       navigator.serial.removeEventListener('disconnect', handleDisconnect);
   }, [serialPort]);
 
-  async function sendFrames() {
+  // async function sendFrames() {
+  //   if (!serialPort) return showToast('No serial port connected');
+  //   setSending(true);
+  //   let reader = null;
+  //   try {
+  //     // Read back ACK (0xAA) / NACK (0xFF) per frame so a silent failure
+  //     // (e.g. the board isn't running the Receiver Sketch) is visible
+  //     // instead of reporting false success.
+  //     reader = serialPort.readable.getReader();
+  //     const readByte = createByteReader(reader);
+
+  //     // Drains any bytes sitting in the queue right now (e.g. a stray
+  //     // leftover from a previous failed send, or a late response to an
+  //     // attempt we already gave up on) so the next readByte() call can't
+  //     // pick up something stale instead of the response it's actually
+  //     // waiting for.
+  //     async function drainStale() {
+  //       for (let i = 0; i < 200; i++) {
+  //         try {
+  //           await readByte(20);
+  //         } catch (e) {
+  //           break; // nothing waiting -- queue is empty
+  //         }
+  //       }
+  //     }
+
+  //     // A previous Send that errored out partway can leave stray bytes
+  //     // sitting in the queue (e.g. an ACK the device sent right as we gave
+  //     // up). If we don't drain those first, this session's first readByte()
+  //     // call picks up that leftover byte instead of the real response to
+  //     // frame 1, misaligning everything that follows.
+  //     await drainStale();
+
+  //     const openCmd = new Uint8Array(70).fill(0xad);
+  //     await writeToPort(serialPort, openCmd);
+
+  //     let totalRetries = 0;
+  //     const maxAttempts = 3;
+
+  //     for (let fi = 0; fi < frames.length; fi++) {
+  //       // Apply mirroring transformation to match physical cube orientation
+  //       const transformedFrame = mirrorX(frames[fi]);
+  //       const buf = new Uint8Array(66);
+  //       buf[0] = 0xf2;
+  //       let checksum = 0;
+  //       for (let i = 0; i < 64; i++) {
+  //         const b = transformedFrame[i] || 0;
+  //         buf[i + 1] = b;
+  //         checksum = (checksum + b) & 0xff;
+  //       }
+  //       buf[65] = checksum; // receiver sketch validates this before ACKing
+
+  //       let acked = false;
+  //       let lastFailReason = null;
+  //       for (let attempt = 1; attempt <= maxAttempts && !acked; attempt++) {
+  //         if (attempt > 1) {
+  //           totalRetries++;
+  //           // give a slow-but-real response a moment to land, then discard
+  //           // it -- otherwise it could get misattributed to this new
+  //           // attempt's write below.
+  //           await drainStale();
+  //         }
+  //         await writeToPort(serialPort, buf);
+  //         try {
+  //           const ack = await readByte(1500);
+  //           if (ack === 0xaa) {
+  //             acked = true;
+  //           } else if (ack === 0xff) {
+  //             lastFailReason = 'checksum mismatch';
+  //           } else {
+  //             lastFailReason = `unexpected response 0x${ack.toString(16)}`;
+  //           }
+  //         } catch (readErr) {
+  //           lastFailReason = 'no response (timeout)';
+  //         }
+  //       }
+
+  //       if (!acked) {
+  //         throw new Error(
+  //           `Frame ${fi + 1}/${frames.length} failed after ${maxAttempts} attempts (${lastFailReason}). ` +
+  //             (lastFailReason === 'no response (timeout)'
+  //               ? `If this is happening right at frame 1, the board may still be resetting ` +
+  //                 `(opening the serial port resets most Arduino boards) — try Disconnect, ` +
+  //                 `wait a couple seconds, then Connect and Send again.`
+  //               : `If this keeps happening on random frames, displayFrame() may be blocking too long ` +
+  //                 `and overflowing the board's serial buffer before it can ACK.`),
+  //         );
+  //       }
+  //     }
+
+  //     const closeCmd = new Uint8Array(70).fill(0xed);
+  //     await writeToPort(serialPort, closeCmd);
+  //     showToast(
+  //       totalRetries > 0
+  //         ? `Sent ${frames.length} frame(s) — all acknowledged (${totalRetries} retry${
+  //             totalRetries === 1 ? '' : 'ies'
+  //           } needed)`
+  //         : `Sent ${frames.length} frame(s) — all acknowledged`,
+  //     );
+  //   } catch (e) {
+  //     showToast(e.message || 'Send failed');
+  //   } finally {
+  //     if (reader) {
+  //       try {
+  //         reader.releaseLock();
+  //       } catch (e) {}
+  //     }
+  //     setSending(false);
+  //     setConfirmSend(false);
+  //   }
+  // }
+
+async function sendFrames() {
     if (!serialPort) return showToast('No serial port connected');
     setSending(true);
-    let reader = null;
     try {
-      // Read back ACK (0xAA) / NACK (0xFF) per frame so a silent failure
-      // (e.g. the board isn't running the Receiver Sketch) is visible
-      // instead of reporting false success.
-      reader = serialPort.readable.getReader();
-      const readByte = createByteReader(reader);
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-      // Drains any bytes sitting in the queue right now (e.g. a stray
-      // leftover from a previous failed send, or a late response to an
-      // attempt we already gave up on) so the next readByte() call can't
-      // pick up something stale instead of the response it's actually
-      // waiting for.
-      async function drainStale() {
-        for (let i = 0; i < 200; i++) {
-          try {
-            await readByte(20);
-          } catch (e) {
-            break; // nothing waiting -- queue is empty
-          }
-        }
-      }
-
-      // A previous Send that errored out partway can leave stray bytes
-      // sitting in the queue (e.g. an ACK the device sent right as we gave
-      // up). If we don't drain those first, this session's first readByte()
-      // call picks up that leftover byte instead of the real response to
-      // frame 1, misaligning everything that follows.
-      await drainStale();
-
+      // 1. Send the Zirrfa Wake-up command
       const openCmd = new Uint8Array(70).fill(0xad);
       await writeToPort(serialPort, openCmd);
+      await wait(200); 
 
-      let totalRetries = 0;
-      const maxAttempts = 3;
+      showToast('Streaming live... (Keep browser open)');
 
-      for (let fi = 0; fi < frames.length; fi++) {
-        // Apply mirroring transformation to match physical cube orientation
-        const transformedFrame = mirrorX(frames[fi]);
-        const buf = new Uint8Array(66);
-        buf[0] = 0xf2;
-        let checksum = 0;
-        for (let i = 0; i < 64; i++) {
-          const b = transformedFrame[i] || 0;
-          buf[i + 1] = b;
-          checksum = (checksum + b) & 0xff;
-        }
-        buf[65] = checksum; // receiver sketch validates this before ACKing
+      // 2. Loop the animation endlessly, just like the Arduino sketch does
+      while (true) {
+        // If the user unchecks "Confirm Send", break the loop and stop streaming
+        if (!confirmSend) break;
 
-        let acked = false;
-        let lastFailReason = null;
-        for (let attempt = 1; attempt <= maxAttempts && !acked; attempt++) {
-          if (attempt > 1) {
-            totalRetries++;
-            // give a slow-but-real response a moment to land, then discard
-            // it -- otherwise it could get misattributed to this new
-            // attempt's write below.
-            await drainStale();
-          }
+        for (const frame of frames) {
+          if (!confirmSend) break; // Check again mid-animation
+          
+          const transformedFrame = mirrorX(frame);
+          const buf = new Uint8Array(65);
+          buf[0] = 0xf2;
+          for (let i = 0; i < 64; i++) buf[i + 1] = transformedFrame[i] || 0;
+          
           await writeToPort(serialPort, buf);
-          try {
-            const ack = await readByte(1500);
-            if (ack === 0xaa) {
-              acked = true;
-            } else if (ack === 0xff) {
-              lastFailReason = 'checksum mismatch';
-            } else {
-              lastFailReason = `unexpected response 0x${ack.toString(16)}`;
-            }
-          } catch (readErr) {
-            lastFailReason = 'no response (timeout)';
-          }
-        }
-
-        if (!acked) {
-          throw new Error(
-            `Frame ${fi + 1}/${frames.length} failed after ${maxAttempts} attempts (${lastFailReason}). ` +
-              (lastFailReason === 'no response (timeout)'
-                ? `If this is happening right at frame 1, the board may still be resetting ` +
-                  `(opening the serial port resets most Arduino boards) — try Disconnect, ` +
-                  `wait a couple seconds, then Connect and Send again.`
-                : `If this keeps happening on random frames, displayFrame() may be blocking too long ` +
-                  `and overflowing the board's serial buffer before it can ACK.`),
-          );
+          
+          // Use the UI's delay slider to control the playback speed!
+          await wait(delayMs); 
         }
       }
-
-      const closeCmd = new Uint8Array(70).fill(0xed);
-      await writeToPort(serialPort, closeCmd);
-      showToast(
-        totalRetries > 0
-          ? `Sent ${frames.length} frame(s) — all acknowledged (${totalRetries} retry${
-              totalRetries === 1 ? '' : 'ies'
-            } needed)`
-          : `Sent ${frames.length} frame(s) — all acknowledged`,
-      );
+      
     } catch (e) {
-      showToast(e.message || 'Send failed');
+      showToast('Stream stopped or failed');
     } finally {
-      if (reader) {
-        try {
-          reader.releaseLock();
-        } catch (e) {}
-      }
       setSending(false);
-      setConfirmSend(false);
+      // We explicitly DO NOT send the 0xED close command here, 
+      // otherwise the cube would drop back to its default program.
     }
   }
 
