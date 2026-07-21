@@ -7,7 +7,6 @@ import {
   openPort,
   writeToPort,
   closePort,
-  createByteReader,
 } from './utils/serial';
 import {
   framesToCArray,
@@ -90,8 +89,7 @@ export default function App() {
   });
   const [serialPort, setSerialPort] = useState(null);
   const [connecting, setConnecting] = useState(false);
-  const [confirmSend, setConfirmSend] = useState(false);
-  const [sending, setSending] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [textInput, setTextInput] = useState('HELLO');
   const [glyphInput, setGlyphInput] = useState('A');
@@ -842,9 +840,10 @@ export default function App() {
 
   async function disconnectSerial() {
     if (!serialPort) return;
+    streamingRef.current = false;
+    setStreaming(false);
     await closePort(serialPort);
     setSerialPort(null);
-    setConfirmSend(false);
     showToast('Serial disconnected');
   }
 
@@ -854,8 +853,9 @@ export default function App() {
     if (!('serial' in navigator)) return;
     function handleDisconnect(e) {
       if (e.target === serialPort) {
+        streamingRef.current = false;
+        setStreaming(false);
         setSerialPort(null);
-        setConfirmSend(false);
         showToast('Serial device disconnected');
       }
     }
@@ -864,116 +864,53 @@ export default function App() {
       navigator.serial.removeEventListener('disconnect', handleDisconnect);
   }, [serialPort]);
 
-  async function sendFrames() {
+  const streamingRef = useRef(false);
+
+  // This cube's onboard controller does the real LED driving in its own
+  // firmware and falls back to its own built-in demo pattern whenever the
+  // live feed stops -- sending frames once and closing (the old behavior)
+  // looked identical to that from the controller's point of view. So this
+  // streams continuously, exactly like the exported ANIM.ino's loop() does:
+  // one open handshake, then 0xF2 + 64 raw bytes per frame forever, and it
+  // never sends the 0xED close command while running (that appears to be
+  // what tells the controller to give up and show its demo pattern).
+  async function startStreaming() {
     if (!serialPort) return showToast('No serial port connected');
-    setSending(true);
-    let reader = null;
+    if (streamingRef.current) return;
+    if (!frames.length) return showToast('Nothing to stream');
+    streamingRef.current = true;
+    setStreaming(true);
     try {
-      // Read back ACK (0xAA) / NACK (0xFF) per frame so a silent failure
-      // (e.g. the board isn't running the Receiver Sketch) is visible
-      // instead of reporting false success.
-      reader = serialPort.readable.getReader();
-      const readByte = createByteReader(reader);
-
-      // Drains any bytes sitting in the queue right now (e.g. a stray
-      // leftover from a previous failed send, or a late response to an
-      // attempt we already gave up on) so the next readByte() call can't
-      // pick up something stale instead of the response it's actually
-      // waiting for.
-      async function drainStale() {
-        for (let i = 0; i < 200; i++) {
-          try {
-            await readByte(20);
-          } catch (e) {
-            break; // nothing waiting -- queue is empty
-          }
-        }
-      }
-
-      // A previous Send that errored out partway can leave stray bytes
-      // sitting in the queue (e.g. an ACK the device sent right as we gave
-      // up). If we don't drain those first, this session's first readByte()
-      // call picks up that leftover byte instead of the real response to
-      // frame 1, misaligning everything that follows.
-      await drainStale();
-
       const openCmd = new Uint8Array(70).fill(0xad);
       await writeToPort(serialPort, openCmd);
+      showToast('Streaming live — leave this tab open');
 
-      let totalRetries = 0;
-      const maxAttempts = 3;
-
-      for (let fi = 0; fi < frames.length; fi++) {
-        // Apply mirroring transformation to match physical cube orientation
-        const transformedFrame = mirrorX(frames[fi]);
-        const buf = new Uint8Array(66);
+      let i = 0;
+      while (streamingRef.current) {
+        const idx = i % frames.length;
+        const transformedFrame = mirrorX(frames[idx]);
+        const buf = new Uint8Array(65);
         buf[0] = 0xf2;
-        let checksum = 0;
-        for (let i = 0; i < 64; i++) {
-          const b = transformedFrame[i] || 0;
-          buf[i + 1] = b;
-          checksum = (checksum + b) & 0xff;
-        }
-        buf[65] = checksum; // receiver sketch validates this before ACKing
+        for (let b = 0; b < 64; b++) buf[b + 1] = transformedFrame[b] || 0;
+        await writeToPort(serialPort, buf);
 
-        let acked = false;
-        let lastFailReason = null;
-        for (let attempt = 1; attempt <= maxAttempts && !acked; attempt++) {
-          if (attempt > 1) {
-            totalRetries++;
-            // give a slow-but-real response a moment to land, then discard
-            // it -- otherwise it could get misattributed to this new
-            // attempt's write below.
-            await drainStale();
-          }
-          await writeToPort(serialPort, buf);
-          try {
-            const ack = await readByte(1500);
-            if (ack === 0xaa) {
-              acked = true;
-            } else if (ack === 0xff) {
-              lastFailReason = 'checksum mismatch';
-            } else {
-              lastFailReason = `unexpected response 0x${ack.toString(16)}`;
-            }
-          } catch (readErr) {
-            lastFailReason = 'no response (timeout)';
-          }
-        }
-
-        if (!acked) {
-          throw new Error(
-            `Frame ${fi + 1}/${frames.length} failed after ${maxAttempts} attempts (${lastFailReason}). ` +
-              (lastFailReason === 'no response (timeout)'
-                ? `If this is happening right at frame 1, the board may still be resetting ` +
-                  `(opening the serial port resets most Arduino boards) — try Disconnect, ` +
-                  `wait a couple seconds, then Connect and Send again.`
-                : `If this keeps happening on random frames, displayFrame() may be blocking too long ` +
-                  `and overflowing the board's serial buffer before it can ACK.`),
-          );
-        }
+        const holdMs = frameDelays[idx];
+        const effectiveMs = typeof holdMs === 'number' ? holdMs : delayMs;
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.max(50, effectiveMs)),
+        );
+        i++;
       }
-
-      const closeCmd = new Uint8Array(70).fill(0xed);
-      await writeToPort(serialPort, closeCmd);
-      showToast(
-        totalRetries > 0
-          ? `Sent ${frames.length} frame(s) — all acknowledged (${totalRetries} retry${
-              totalRetries === 1 ? '' : 'ies'
-            } needed)`
-          : `Sent ${frames.length} frame(s) — all acknowledged`,
-      );
     } catch (e) {
-      showToast(e.message || 'Send failed');
+      showToast(`Streaming stopped: ${e.message || 'error'}`);
     } finally {
-      if (reader) {
-        try {
-          reader.releaseLock();
-        } catch (e) {}
-      }
-      setSending(false);
-      setConfirmSend(false);
+      streamingRef.current = false;
+      setStreaming(false);
     }
+  }
+
+  function stopStreaming() {
+    streamingRef.current = false;
   }
 
   function copyToClipboard(text) {
@@ -1556,10 +1493,13 @@ export default function App() {
 
                   <h4>Serial</h4>
                   <p className='muted' style={{ marginTop: -4 }}>
-                    "Send" streams frames live to a board running the{' '}
-                    <strong>Receiver Sketch</strong> (Export tab). It won't
-                    do anything if your board has a different sketch
-                    flashed — reflash with the Receiver Sketch first.
+                    This cube has its own onboard controller that does the
+                    actual LED driving — the Arduino just relays bytes to
+                    it (flash the <strong>Live Relay Sketch</strong>, Export
+                    tab). The controller falls back to its own built-in
+                    demo whenever the live feed stops, so streaming runs
+                    continuously until you stop it — it isn't a one-shot
+                    send.
                   </p>
                   <div className='serial'>
                     <button
@@ -1574,16 +1514,17 @@ export default function App() {
                     >
                       Disconnect
                     </button>
-                    <button
-                      className='btn-danger'
-                      onClick={() => setConfirmSend(true)}
-                      disabled={!serialPort || sending}
-                    >
-                      Send
-                    </button>
-                    {confirmSend && (
-                      <button className='btn-danger' onClick={sendFrames}>
-                        Confirm Send
+                    {!streaming ? (
+                      <button
+                        className='btn-primary'
+                        onClick={startStreaming}
+                        disabled={!serialPort}
+                      >
+                        ▶ Start Streaming
+                      </button>
+                    ) : (
+                      <button className='btn-danger' onClick={stopStreaming}>
+                        ⏹ Stop Streaming
                       </button>
                     )}
                   </div>
@@ -1618,11 +1559,11 @@ export default function App() {
                     onClick={() =>
                       downloadFile(
                         generateStreamingReceiverSketch(),
-                        'receiver.ino',
+                        'live_relay.ino',
                       )
                     }
                   >
-                    Receiver Sketch
+                    Live Relay Sketch
                   </button>
 
                   <h4>Share</h4>
