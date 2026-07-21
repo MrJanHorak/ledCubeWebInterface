@@ -16,6 +16,7 @@ import {
   generateTextFrames,
   generateGlyphFrames,
   generateStreamingReceiverSketch,
+  generateImageFrames,
 } from './utils/exporter';
 import {
   mirrorX,
@@ -43,15 +44,50 @@ import {
   generateOrbitFrames,
 } from './utils/patterns';
 
+function loadAutosave() {
+  try {
+    const saved = localStorage.getItem('ledcube-autosave');
+    if (!saved) return null;
+    const parsed = JSON.parse(saved);
+    if (parsed && Array.isArray(parsed.frames) && parsed.frames.length > 0) {
+      return parsed;
+    }
+  } catch (e) {}
+  return null;
+}
+
 export default function App() {
-  const [frames, setFrames] = useState([]);
+  const [frames, setFrames] = useState(() => {
+    const auto = loadAutosave();
+    return auto ? auto.frames : [new Array(64).fill(0x00)];
+  });
+  const [restoredFromAutosave] = useState(() => !!loadAutosave());
   const [current, setCurrent] = useState(0);
+  // Per-frame hold-time overrides. null at an index means "use the global
+  // delayMs slider for this frame". Kept in lockstep with `frames` via
+  // commitFrames/undo/redo below, same as the frame data itself.
+  const [frameDelays, setFrameDelays] = useState(() => {
+    const auto = loadAutosave();
+    if (
+      auto &&
+      Array.isArray(auto.frameDelays) &&
+      Array.isArray(auto.frames) &&
+      auto.frameDelays.length === auto.frames.length
+    ) {
+      return auto.frameDelays;
+    }
+    const len = auto && Array.isArray(auto.frames) ? auto.frames.length : 1;
+    return new Array(len).fill(null);
+  });
   const [playing, setPlaying] = useState(false);
   const [playDirection, setPlayDirection] = useState(1);
   const [onionSkin, setOnionSkin] = useState(false);
   const [appendMode, setAppendMode] = useState(true);
   const [scannerAxis, setScannerAxis] = useState('z');
-  const [delayMs, setDelayMs] = useState(300);
+  const [delayMs, setDelayMs] = useState(() => {
+    const auto = loadAutosave();
+    return auto && typeof auto.delayMs === 'number' ? auto.delayMs : 300;
+  });
   const [serialPort, setSerialPort] = useState(null);
   const [connecting, setConnecting] = useState(false);
   const [confirmSend, setConfirmSend] = useState(false);
@@ -64,6 +100,12 @@ export default function App() {
   const [transitionSteps, setTransitionSteps] = useState(6);
   const [transitionEasing, setTransitionEasing] = useState('linear');
   const [emoticon, setEmoticon] = useState('SMILE');
+  const [imageThreshold, setImageThreshold] = useState(128);
+  const [imageSpin, setImageSpin] = useState(true);
+  const [audioRecording, setAudioRecording] = useState(false);
+  const [audioSecondsLeft, setAudioSecondsLeft] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(6);
+  const audioStateRef = useRef(null);
   const [activeTab, setActiveTab] = useState('playback');
   const [toast, setToast] = useState(null);
   const [frameClipboard, setFrameClipboard] = useState(null);
@@ -95,45 +137,87 @@ export default function App() {
     } catch (e) {}
   }, [theme]);
 
+  // Silent autosave: if the tab reloads or crashes, the next visit picks
+  // up where you left off. Separate from Presets (named, manual saves) and
+  // JSON export (portable files) -- this is just a local safety net.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(
+          'ledcube-autosave',
+          JSON.stringify({
+            frames,
+            delayMs,
+            frameDelays,
+            savedAt: new Date().toISOString(),
+          }),
+        );
+      } catch (e) {
+        // best-effort only -- storage full or unavailable is not fatal
+      }
+    }, 600);
+    return () => clearTimeout(t);
+  }, [frames, delayMs, frameDelays]);
+
+  useEffect(() => {
+    if (restoredFromAutosave) showToast('Restored your last session');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const playRef = useRef(null);
+  const cubeCanvasRef = useRef(null);
   const undoStack = useRef([]);
   const redoStack = useRef([]);
   const [historyTick, setHistoryTick] = useState(0); // forces re-render so Undo/Redo buttons enable/disable correctly
 
   // Use this instead of setFrames directly for any user edit that should be
   // undoable. Navigation (setCurrent, setPlaying, etc.) is intentionally NOT
-  // tracked -- only the frame data itself.
-  function commitFrames(updater) {
-    setFrames((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      undoStack.current.push(prev);
-      if (undoStack.current.length > 50) undoStack.current.shift();
-      redoStack.current = [];
-      setHistoryTick((t) => t + 1);
-      return next;
-    });
+  // tracked -- only the frame data (and its per-frame delays) is.
+  // `delaysUpdater` works exactly like `updater` but operates on
+  // frameDelays; if omitted, delays are just padded/trimmed at the end to
+  // match the new frame count (a safe but imprecise fallback -- callers
+  // that insert/remove frames in the middle should pass one explicitly).
+  function commitFrames(updater, delaysUpdater) {
+    const prevFrames = frames;
+    const prevDelays = frameDelays;
+    const nextFrames = typeof updater === 'function' ? updater(prevFrames) : updater;
+    let nextDelays;
+    if (delaysUpdater) {
+      nextDelays =
+        typeof delaysUpdater === 'function'
+          ? delaysUpdater(prevDelays)
+          : delaysUpdater;
+    } else {
+      nextDelays = prevDelays.slice(0, nextFrames.length);
+      while (nextDelays.length < nextFrames.length) nextDelays.push(null);
+    }
+
+    undoStack.current.push({ frames: prevFrames, delays: prevDelays });
+    if (undoStack.current.length > 50) undoStack.current.shift();
+    redoStack.current = [];
+    setHistoryTick((t) => t + 1);
+    setFrames(nextFrames);
+    setFrameDelays(nextDelays);
   }
 
   function undo() {
     if (undoStack.current.length === 0) return;
-    setFrames((prev) => {
-      const last = undoStack.current.pop();
-      redoStack.current.push(prev);
-      setHistoryTick((t) => t + 1);
-      setCurrent((c) => Math.min(c, Math.max(0, last.length - 1)));
-      return last;
-    });
+    const { frames: lastFrames, delays: lastDelays } = undoStack.current.pop();
+    redoStack.current.push({ frames, delays: frameDelays });
+    setHistoryTick((t) => t + 1);
+    setCurrent((c) => Math.min(c, Math.max(0, lastFrames.length - 1)));
+    setFrames(lastFrames);
+    setFrameDelays(lastDelays);
   }
 
   function redo() {
     if (redoStack.current.length === 0) return;
-    setFrames((prev) => {
-      const next = redoStack.current.pop();
-      undoStack.current.push(prev);
-      setHistoryTick((t) => t + 1);
-      setCurrent((c) => Math.min(c, Math.max(0, next.length - 1)));
-      return next;
-    });
+    const { frames: nextFrames, delays: nextDelays } = redoStack.current.pop();
+    undoStack.current.push({ frames, delays: frameDelays });
+    setHistoryTick((t) => t + 1);
+    setCurrent((c) => Math.min(c, Math.max(0, nextFrames.length - 1)));
+    setFrames(nextFrames);
+    setFrameDelays(nextDelays);
   }
 
   useEffect(() => {
@@ -182,16 +266,13 @@ export default function App() {
 
   useEffect(() => {
     if (!playing) return;
-    playRef.current = setInterval(
-      () => {
-        setCurrent(
-          (c) => (c + playDirection + frames.length) % frames.length,
-        );
-      },
-      Math.max(50, delayMs),
-    );
-    return () => clearInterval(playRef.current);
-  }, [playing, playDirection, delayMs, frames.length]);
+    const holdMs = frameDelays[current];
+    const effectiveMs = typeof holdMs === 'number' ? holdMs : delayMs;
+    playRef.current = setTimeout(() => {
+      setCurrent((c) => (c + playDirection + frames.length) % frames.length);
+    }, Math.max(50, effectiveMs));
+    return () => clearTimeout(playRef.current);
+  }, [playing, current, playDirection, delayMs, frames.length, frameDelays]);
 
   const showToast = (msg, ms = 2500) => {
     setToast(msg);
@@ -199,24 +280,38 @@ export default function App() {
   };
 
   function updateFrame(i, newFrame) {
-    commitFrames((f) => {
-      const copy = f.slice();
-      copy[i] = newFrame.slice();
-      return copy;
-    });
+    commitFrames(
+      (f) => {
+        const copy = f.slice();
+        copy[i] = newFrame.slice();
+        return copy;
+      },
+      (d) => d, // content-only change, delays untouched
+    );
   }
 
   function addBlankFrame() {
-    commitFrames((f) => [...f, new Array(64).fill(0x00)]);
+    commitFrames(
+      (f) => [...f, new Array(64).fill(0x00)],
+      (d) => [...d, null],
+    );
     setCurrent(frames.length);
   }
 
   function duplicateFrame() {
-    commitFrames((f) => {
-      const copy = f.slice();
-      copy.splice(current + 1, 0, copy[current].slice());
-      return copy;
-    });
+    commitFrames(
+      (f) => {
+        const copy = f.slice();
+        copy.splice(current + 1, 0, copy[current].slice());
+        return copy;
+      },
+      (d) => {
+        const copy = d.slice();
+        // the clone starts with the same hold time as its source
+        copy.splice(current + 1, 0, copy[current] ?? null);
+        return copy;
+      },
+    );
     setCurrent((c) => c + 1);
   }
 
@@ -233,24 +328,50 @@ export default function App() {
 
   function deleteFrame() {
     if (frames.length <= 1) return;
-    commitFrames((f) => {
-      const copy = f.slice();
-      copy.splice(current, 1);
-      return copy;
-    });
+    commitFrames(
+      (f) => {
+        const copy = f.slice();
+        copy.splice(current, 1);
+        return copy;
+      },
+      (d) => {
+        const copy = d.slice();
+        copy.splice(current, 1);
+        return copy;
+      },
+    );
     setCurrent((c) => Math.max(0, c - 1));
   }
 
   function reverseFrames() {
-    commitFrames((f) => f.slice().reverse());
+    commitFrames(
+      (f) => f.slice().reverse(),
+      (d) => d.slice().reverse(),
+    );
     setCurrent((c) => Math.max(0, frames.length - 1 - c));
     showToast('Frame order reversed');
   }
 
   function clearAllFrames() {
-    commitFrames([new Array(64).fill(0x00)]);
+    commitFrames([new Array(64).fill(0x00)], [null]);
     setCurrent(0);
     showToast('Timeline cleared (Undo to bring it back)');
+  }
+
+  function setCurrentFrameDelay(ms) {
+    setFrameDelays((d) => {
+      const copy = d.slice();
+      copy[current] = ms;
+      return copy;
+    });
+  }
+
+  function clearCurrentFrameDelay() {
+    setFrameDelays((d) => {
+      const copy = d.slice();
+      copy[current] = null;
+      return copy;
+    });
   }
 
   // Roughly where a typical small board (e.g. an Uno's 32KB flash) starts
@@ -267,11 +388,14 @@ export default function App() {
     let totalAfter;
     if (appendMode) {
       const insertAt = frames.length;
-      commitFrames((f) => [...f, ...newFrames]);
+      commitFrames(
+        (f) => [...f, ...newFrames],
+        (d) => [...d, ...new Array(newFrames.length).fill(null)],
+      );
       totalAfter = frames.length + newFrames.length;
       setCurrent(insertAt);
     } else {
-      commitFrames(newFrames);
+      commitFrames(newFrames, new Array(newFrames.length).fill(null));
       totalAfter = newFrames.length;
       setCurrent(0);
     }
@@ -298,6 +422,191 @@ export default function App() {
   function startGlyphSpin() {
     const glyphFrames = generateGlyphFrames(glyphInput || 'A', 6, glyphMode);
     appendOrReplaceFrames(glyphFrames, 'Spin Glyph');
+  }
+
+  function handleImageImport(ev) {
+    const file = ev?.target?.files && ev.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 8;
+          canvas.height = 8;
+          const ctx = canvas.getContext('2d');
+          // white background first so transparent pixels read as "off"
+          // rather than picking up whatever was previously on the canvas
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, 8, 8);
+          ctx.drawImage(img, 0, 0, 8, 8);
+          const data = ctx.getImageData(0, 0, 8, 8).data;
+          const columns = new Array(8).fill(0);
+          for (let row = 0; row < 8; row++) {
+            for (let x = 0; x < 8; x++) {
+              const idx = (row * 8 + x) * 4;
+              const r = data[idx];
+              const g = data[idx + 1];
+              const b = data[idx + 2];
+              const a = data[idx + 3];
+              const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+              const on = a > 32 && luminance < imageThreshold;
+              if (on) {
+                const z = 7 - row; // image top -> cube top
+                columns[x] |= 1 << z;
+              }
+            }
+          }
+          const imgFrames = generateImageFrames(columns, 6, imageSpin);
+          appendOrReplaceFrames(imgFrames, 'Image Import');
+        } catch (err) {
+          showToast('Could not process that image');
+        }
+      };
+      img.onerror = () => showToast('Could not load that image');
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+    ev.target.value = ''; // allow re-selecting the same file later
+  }
+
+  async function startAudioRecording() {
+    if (audioRecording) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return showToast('Microphone access is not available in this browser');
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      return showToast('Microphone permission denied or unavailable');
+    }
+
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContextClass();
+    const source = audioCtx.createMediaStreamSource(stream);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 256; // 128 frequency bins
+    source.connect(analyser);
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    const binsPerColumn = Math.max(1, Math.floor(bufferLength / 8));
+
+    const captured = [];
+    const intervalMs = 66; // ~15fps
+    const totalTicks = Math.max(1, Math.round((audioDuration * 1000) / intervalMs));
+    let tick = 0;
+
+    setAudioRecording(true);
+    setAudioSecondsLeft(audioDuration);
+
+    function cleanup() {
+      clearInterval(intervalId);
+      setAudioRecording(false);
+      setAudioSecondsLeft(0);
+      audioStateRef.current = null;
+      stream.getTracks().forEach((t) => t.stop());
+      audioCtx.close().catch(() => {});
+    }
+
+    function finish() {
+      cleanup();
+      if (captured.length > 0) {
+        appendOrReplaceFrames(captured, 'Audio Reactive');
+      } else {
+        showToast('No audio captured');
+      }
+    }
+
+    const intervalId = setInterval(() => {
+      analyser.getByteFrequencyData(dataArray);
+      const frame = new Array(64).fill(0);
+      for (let x = 0; x < 8; x++) {
+        let sum = 0;
+        for (let b = 0; b < binsPerColumn; b++) {
+          sum += dataArray[x * binsPerColumn + b] || 0;
+        }
+        const avg = sum / binsPerColumn;
+        const height = Math.min(8, Math.round((avg / 255) * 8));
+        let mask = 0;
+        for (let z = 0; z < height; z++) mask |= 1 << z;
+        // full depth so the bar reads clearly from any viewing angle
+        for (let y = 0; y < 8; y++) frame[8 * y + x] = mask;
+      }
+      captured.push(frame);
+      tick++;
+      setAudioSecondsLeft(
+        Math.max(0, Math.ceil(((totalTicks - tick) * intervalMs) / 1000)),
+      );
+      if (tick >= totalTicks) finish();
+    }, intervalMs);
+
+    audioStateRef.current = { intervalId, cleanup, captured, finish };
+  }
+
+  function stopAudioRecording() {
+    const st = audioStateRef.current;
+    if (!st) return;
+    st.finish();
+  }
+
+  function exportVideo() {
+    const canvas = cubeCanvasRef.current;
+    if (!canvas || !canvas.captureStream) {
+      return showToast('Video export is not supported in this browser');
+    }
+    if (!frames.length) return showToast('Nothing to export');
+    if (!window.MediaRecorder) {
+      return showToast('Video recording is not supported in this browser');
+    }
+    const mimeCandidates = [
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm',
+    ];
+    const mimeType = mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m));
+    if (!mimeType) {
+      return showToast('Video recording is not supported in this browser');
+    }
+
+    const wasPlaying = playing;
+    const wasCurrent = current;
+    const wasDirection = playDirection;
+
+    const totalMs = frames.reduce((sum, _, i) => {
+      const holdMs = frameDelays[i];
+      return sum + Math.max(50, typeof holdMs === 'number' ? holdMs : delayMs);
+    }, 0);
+
+    const stream = canvas.captureStream(30);
+    const recorder = new MediaRecorder(stream, { mimeType });
+    const chunks = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunks.push(e.data);
+    };
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'cube-animation.webm';
+      a.click();
+      URL.revokeObjectURL(url);
+      setPlaying(wasPlaying);
+      setCurrent(wasCurrent);
+      setPlayDirection(wasDirection);
+      showToast('Video exported');
+    };
+
+    setPlayDirection(1);
+    setCurrent(0);
+    setPlaying(true);
+    recorder.start();
+    showToast(`Recording ${Math.round(totalMs / 1000)}s of video…`, 3000);
+    setTimeout(() => {
+      if (recorder.state !== 'inactive') recorder.stop();
+    }, totalMs + 300);
   }
 
   function startEmoticonSpin() {
@@ -361,6 +670,29 @@ export default function App() {
     appendOrReplaceFrames(generateOrbitFrames(32, 0.5), 'Orbit');
   }
 
+  function startRandomPattern() {
+    const options = [
+      ['Sphere', () => generateSphereFrames(12 + Math.floor(Math.random() * 16))],
+      ['Rain', () => generateRainFrames(20 + Math.floor(Math.random() * 20), 0.1 + Math.random() * 0.15)],
+      ['Scanner', () => generateScannerFrames(['x', 'y', 'z'][Math.floor(Math.random() * 3)], 12 + Math.floor(Math.random() * 12))],
+      ['Sparkle', () => generateSparkleFrames(20 + Math.floor(Math.random() * 20), 0.08 + Math.random() * 0.15)],
+      ['Wireframe Cube', () => generateWireframeCubeFrames(16 + Math.floor(Math.random() * 20))],
+      ['Spiral', () => generateSpiralFrames(24 + Math.floor(Math.random() * 20), 2 + Math.floor(Math.random() * 3))],
+      ['Bouncing Ball', () => generateBouncingBallFrames(25 + Math.floor(Math.random() * 30))],
+      ['Fireworks', () => generateFireworksFrames(2 + Math.floor(Math.random() * 3), 8 + Math.floor(Math.random() * 8))],
+      ['Expanding Cube', () => generateExpandingCubeFrames(12 + Math.floor(Math.random() * 16))],
+      ['Wave', () => generateWaveFrames(24 + Math.floor(Math.random() * 20))],
+      ['Snake', () => generateSnakeFrames(30 + Math.floor(Math.random() * 20), 4 + Math.floor(Math.random() * 6), Math.floor(Math.random() * 10000))],
+      ['Fill / Drain', () => generateFillDrainFrames(1 + Math.floor(Math.random() * 3))],
+      ['Checkerboard', () => generateCheckerboardFrames(12 + Math.floor(Math.random() * 16))],
+      ['Diagonal Scanner', () => generateDiagonalScannerFrames(14 + Math.floor(Math.random() * 14))],
+      ['Edge Chase', () => generateEdgeChaseFrames(24 + Math.floor(Math.random() * 20), 2 + Math.floor(Math.random() * 4))],
+      ['Orbit', () => generateOrbitFrames(24 + Math.floor(Math.random() * 20), Math.random() * 1.2)],
+    ];
+    const [name, gen] = options[Math.floor(Math.random() * options.length)];
+    appendOrReplaceFrames(gen(), `Random: ${name}`);
+  }
+
   function insertTransition() {
     const next = Math.min(current + 1, frames.length - 1);
     const a = frames[current];
@@ -371,11 +703,18 @@ export default function App() {
       Number(transitionSteps) || 4,
       transitionEasing,
     );
-    commitFrames((f) => {
-      const copy = f.slice();
-      copy.splice(next, 0, ...tween);
-      return copy;
-    });
+    commitFrames(
+      (f) => {
+        const copy = f.slice();
+        copy.splice(next, 0, ...tween);
+        return copy;
+      },
+      (d) => {
+        const copy = d.slice();
+        copy.splice(next, 0, ...new Array(tween.length).fill(null));
+        return copy;
+      },
+    );
     showToast('Transition inserted');
   }
 
@@ -386,8 +725,23 @@ export default function App() {
     r.onload = (e) => {
       try {
         const data = JSON.parse(e.target.result);
+        let loadedFrames = null;
+        let loadedDelays = null;
         if (Array.isArray(data)) {
-          commitFrames(data);
+          // legacy format: a plain array of frames, no per-frame delays
+          loadedFrames = data;
+        } else if (data && Array.isArray(data.frames)) {
+          loadedFrames = data.frames;
+          if (
+            Array.isArray(data.delays) &&
+            data.delays.length === data.frames.length
+          ) {
+            loadedDelays = data.delays;
+          }
+        }
+        if (loadedFrames) {
+          const delays = loadedDelays || new Array(loadedFrames.length).fill(null);
+          commitFrames(loadedFrames, delays);
           setCurrent(0);
           showToast('Loaded JSON');
         } else {
@@ -414,7 +768,12 @@ export default function App() {
     if (!name) return;
     const next = {
       ...presets,
-      [name]: { frames, delayMs, savedAt: new Date().toISOString() },
+      [name]: {
+        frames,
+        delayMs,
+        frameDelays,
+        savedAt: new Date().toISOString(),
+      },
     };
     persistPresets(next);
     setSelectedPreset(name);
@@ -425,7 +784,12 @@ export default function App() {
   function loadPreset() {
     const preset = presets[selectedPreset];
     if (!preset) return;
-    commitFrames(preset.frames);
+    const delays =
+      Array.isArray(preset.frameDelays) &&
+      preset.frameDelays.length === preset.frames.length
+        ? preset.frameDelays
+        : new Array(preset.frames.length).fill(null);
+    commitFrames(preset.frames, delays);
     if (typeof preset.delayMs === 'number') setDelayMs(preset.delayMs);
     setCurrent(0);
     showToast(`Loaded preset "${selectedPreset}"`);
@@ -441,9 +805,10 @@ export default function App() {
   }
 
   function saveJSON() {
-    const blob = new Blob([JSON.stringify(frames, null, 2)], {
-      type: 'application/json',
-    });
+    const blob = new Blob(
+      [JSON.stringify({ frames, delays: frameDelays }, null, 2)],
+      { type: 'application/json' },
+    );
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -499,157 +864,115 @@ export default function App() {
       navigator.serial.removeEventListener('disconnect', handleDisconnect);
   }, [serialPort]);
 
-  // async function sendFrames() {
-  //   if (!serialPort) return showToast('No serial port connected');
-  //   setSending(true);
-  //   let reader = null;
-  //   try {
-  //     // Read back ACK (0xAA) / NACK (0xFF) per frame so a silent failure
-  //     // (e.g. the board isn't running the Receiver Sketch) is visible
-  //     // instead of reporting false success.
-  //     reader = serialPort.readable.getReader();
-  //     const readByte = createByteReader(reader);
-
-  //     // Drains any bytes sitting in the queue right now (e.g. a stray
-  //     // leftover from a previous failed send, or a late response to an
-  //     // attempt we already gave up on) so the next readByte() call can't
-  //     // pick up something stale instead of the response it's actually
-  //     // waiting for.
-  //     async function drainStale() {
-  //       for (let i = 0; i < 200; i++) {
-  //         try {
-  //           await readByte(20);
-  //         } catch (e) {
-  //           break; // nothing waiting -- queue is empty
-  //         }
-  //       }
-  //     }
-
-  //     // A previous Send that errored out partway can leave stray bytes
-  //     // sitting in the queue (e.g. an ACK the device sent right as we gave
-  //     // up). If we don't drain those first, this session's first readByte()
-  //     // call picks up that leftover byte instead of the real response to
-  //     // frame 1, misaligning everything that follows.
-  //     await drainStale();
-
-  //     const openCmd = new Uint8Array(70).fill(0xad);
-  //     await writeToPort(serialPort, openCmd);
-
-  //     let totalRetries = 0;
-  //     const maxAttempts = 3;
-
-  //     for (let fi = 0; fi < frames.length; fi++) {
-  //       // Apply mirroring transformation to match physical cube orientation
-  //       const transformedFrame = mirrorX(frames[fi]);
-  //       const buf = new Uint8Array(66);
-  //       buf[0] = 0xf2;
-  //       let checksum = 0;
-  //       for (let i = 0; i < 64; i++) {
-  //         const b = transformedFrame[i] || 0;
-  //         buf[i + 1] = b;
-  //         checksum = (checksum + b) & 0xff;
-  //       }
-  //       buf[65] = checksum; // receiver sketch validates this before ACKing
-
-  //       let acked = false;
-  //       let lastFailReason = null;
-  //       for (let attempt = 1; attempt <= maxAttempts && !acked; attempt++) {
-  //         if (attempt > 1) {
-  //           totalRetries++;
-  //           // give a slow-but-real response a moment to land, then discard
-  //           // it -- otherwise it could get misattributed to this new
-  //           // attempt's write below.
-  //           await drainStale();
-  //         }
-  //         await writeToPort(serialPort, buf);
-  //         try {
-  //           const ack = await readByte(1500);
-  //           if (ack === 0xaa) {
-  //             acked = true;
-  //           } else if (ack === 0xff) {
-  //             lastFailReason = 'checksum mismatch';
-  //           } else {
-  //             lastFailReason = `unexpected response 0x${ack.toString(16)}`;
-  //           }
-  //         } catch (readErr) {
-  //           lastFailReason = 'no response (timeout)';
-  //         }
-  //       }
-
-  //       if (!acked) {
-  //         throw new Error(
-  //           `Frame ${fi + 1}/${frames.length} failed after ${maxAttempts} attempts (${lastFailReason}). ` +
-  //             (lastFailReason === 'no response (timeout)'
-  //               ? `If this is happening right at frame 1, the board may still be resetting ` +
-  //                 `(opening the serial port resets most Arduino boards) — try Disconnect, ` +
-  //                 `wait a couple seconds, then Connect and Send again.`
-  //               : `If this keeps happening on random frames, displayFrame() may be blocking too long ` +
-  //                 `and overflowing the board's serial buffer before it can ACK.`),
-  //         );
-  //       }
-  //     }
-
-  //     const closeCmd = new Uint8Array(70).fill(0xed);
-  //     await writeToPort(serialPort, closeCmd);
-  //     showToast(
-  //       totalRetries > 0
-  //         ? `Sent ${frames.length} frame(s) — all acknowledged (${totalRetries} retry${
-  //             totalRetries === 1 ? '' : 'ies'
-  //           } needed)`
-  //         : `Sent ${frames.length} frame(s) — all acknowledged`,
-  //     );
-  //   } catch (e) {
-  //     showToast(e.message || 'Send failed');
-  //   } finally {
-  //     if (reader) {
-  //       try {
-  //         reader.releaseLock();
-  //       } catch (e) {}
-  //     }
-  //     setSending(false);
-  //     setConfirmSend(false);
-  //   }
-  // }
-
-async function sendFrames() {
+  async function sendFrames() {
     if (!serialPort) return showToast('No serial port connected');
     setSending(true);
+    let reader = null;
     try {
-      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      // Read back ACK (0xAA) / NACK (0xFF) per frame so a silent failure
+      // (e.g. the board isn't running the Receiver Sketch) is visible
+      // instead of reporting false success.
+      reader = serialPort.readable.getReader();
+      const readByte = createByteReader(reader);
 
-      // 1. Send the Zirrfa Wake-up command
-      const openCmd = new Uint8Array(70).fill(0xad);
-      await writeToPort(serialPort, openCmd);
-      await wait(200); 
-
-      showToast('Streaming live... (Keep browser open)');
-
-      // 2. Loop the animation endlessly, just like the Arduino sketch does
-      while (true) {
-        // If the user unchecks "Confirm Send", break the loop and stop streaming
-        if (!confirmSend) break;
-
-        for (const frame of frames) {
-          if (!confirmSend) break; // Check again mid-animation
-          
-          const transformedFrame = mirrorX(frame);
-          const buf = new Uint8Array(65);
-          buf[0] = 0xf2;
-          for (let i = 0; i < 64; i++) buf[i + 1] = transformedFrame[i] || 0;
-          
-          await writeToPort(serialPort, buf);
-          
-          // Use the UI's delay slider to control the playback speed!
-          await wait(delayMs); 
+      // Drains any bytes sitting in the queue right now (e.g. a stray
+      // leftover from a previous failed send, or a late response to an
+      // attempt we already gave up on) so the next readByte() call can't
+      // pick up something stale instead of the response it's actually
+      // waiting for.
+      async function drainStale() {
+        for (let i = 0; i < 200; i++) {
+          try {
+            await readByte(20);
+          } catch (e) {
+            break; // nothing waiting -- queue is empty
+          }
         }
       }
-      
+
+      // A previous Send that errored out partway can leave stray bytes
+      // sitting in the queue (e.g. an ACK the device sent right as we gave
+      // up). If we don't drain those first, this session's first readByte()
+      // call picks up that leftover byte instead of the real response to
+      // frame 1, misaligning everything that follows.
+      await drainStale();
+
+      const openCmd = new Uint8Array(70).fill(0xad);
+      await writeToPort(serialPort, openCmd);
+
+      let totalRetries = 0;
+      const maxAttempts = 3;
+
+      for (let fi = 0; fi < frames.length; fi++) {
+        // Apply mirroring transformation to match physical cube orientation
+        const transformedFrame = mirrorX(frames[fi]);
+        const buf = new Uint8Array(66);
+        buf[0] = 0xf2;
+        let checksum = 0;
+        for (let i = 0; i < 64; i++) {
+          const b = transformedFrame[i] || 0;
+          buf[i + 1] = b;
+          checksum = (checksum + b) & 0xff;
+        }
+        buf[65] = checksum; // receiver sketch validates this before ACKing
+
+        let acked = false;
+        let lastFailReason = null;
+        for (let attempt = 1; attempt <= maxAttempts && !acked; attempt++) {
+          if (attempt > 1) {
+            totalRetries++;
+            // give a slow-but-real response a moment to land, then discard
+            // it -- otherwise it could get misattributed to this new
+            // attempt's write below.
+            await drainStale();
+          }
+          await writeToPort(serialPort, buf);
+          try {
+            const ack = await readByte(1500);
+            if (ack === 0xaa) {
+              acked = true;
+            } else if (ack === 0xff) {
+              lastFailReason = 'checksum mismatch';
+            } else {
+              lastFailReason = `unexpected response 0x${ack.toString(16)}`;
+            }
+          } catch (readErr) {
+            lastFailReason = 'no response (timeout)';
+          }
+        }
+
+        if (!acked) {
+          throw new Error(
+            `Frame ${fi + 1}/${frames.length} failed after ${maxAttempts} attempts (${lastFailReason}). ` +
+              (lastFailReason === 'no response (timeout)'
+                ? `If this is happening right at frame 1, the board may still be resetting ` +
+                  `(opening the serial port resets most Arduino boards) — try Disconnect, ` +
+                  `wait a couple seconds, then Connect and Send again.`
+                : `If this keeps happening on random frames, displayFrame() may be blocking too long ` +
+                  `and overflowing the board's serial buffer before it can ACK.`),
+          );
+        }
+      }
+
+      const closeCmd = new Uint8Array(70).fill(0xed);
+      await writeToPort(serialPort, closeCmd);
+      showToast(
+        totalRetries > 0
+          ? `Sent ${frames.length} frame(s) — all acknowledged (${totalRetries} retry${
+              totalRetries === 1 ? '' : 'ies'
+            } needed)`
+          : `Sent ${frames.length} frame(s) — all acknowledged`,
+      );
     } catch (e) {
-      showToast('Stream stopped or failed');
+      showToast(e.message || 'Send failed');
     } finally {
+      if (reader) {
+        try {
+          reader.releaseLock();
+        } catch (e) {}
+      }
       setSending(false);
-      // We explicitly DO NOT send the 0xED close command here, 
-      // otherwise the cube would drop back to its default program.
+      setConfirmSend(false);
     }
   }
 
@@ -699,6 +1022,9 @@ async function sendFrames() {
             nextFrame={
               current < frames.length - 1 ? frames[current + 1] : null
             }
+            onReady={(canvas) => {
+              cubeCanvasRef.current = canvas;
+            }}
           />
           <label className='onion-toggle'>
             <input
@@ -762,6 +1088,31 @@ async function sendFrames() {
                   style={{ width: 60 }}
                 />
               </label>
+              <label title="Override just this frame's hold time (blank = use the Delay above)">
+                Frame hold (ms):{' '}
+                <input
+                  type='number'
+                  placeholder={String(delayMs)}
+                  value={
+                    typeof frameDelays[current] === 'number'
+                      ? frameDelays[current]
+                      : ''
+                  }
+                  onChange={(e) =>
+                    setCurrentFrameDelay(
+                      e.target.value === '' ? null : Number(e.target.value),
+                    )
+                  }
+                  style={{ width: 70 }}
+                />
+              </label>
+              <button
+                onClick={clearCurrentFrameDelay}
+                disabled={typeof frameDelays[current] !== 'number'}
+                title="Clear this frame's override and use the global Delay again"
+              >
+                Use Default
+              </button>
               <button
                 onClick={undo}
                 disabled={undoStack.current.length === 0}
@@ -793,7 +1144,7 @@ async function sendFrames() {
                   checked={appendMode}
                   onChange={(e) => setAppendMode(e.target.checked)}
                 />
-                Add to end of timeline
+                Add to end of timeline (unchecked replaces it)
               </label>
               <div style={{ marginBottom: 10 }}>
                 <input
@@ -889,8 +1240,86 @@ async function sendFrames() {
             </div>
 
             <div className='card-panel'>
+              <h4>Import Image</h4>
+              <p className='muted' style={{ marginTop: -4 }}>
+                Downsampled to 8×8 and thresholded to on/off — also respects
+                "Add to end of timeline" above.
+              </p>
+              <div className='files'>
+                <label>
+                  <input
+                    type='file'
+                    accept='image/*'
+                    onChange={handleImageImport}
+                    style={{ display: 'none' }}
+                  />
+                  <button as='span'>🖼️ Choose Image…</button>
+                </label>
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <label>
+                  Threshold:{' '}
+                  <input
+                    type='range'
+                    min={0}
+                    max={255}
+                    value={imageThreshold}
+                    onChange={(e) =>
+                      setImageThreshold(Number(e.target.value))
+                    }
+                  />{' '}
+                  {imageThreshold}
+                </label>
+              </div>
+              <label
+                className='onion-toggle'
+                style={{ marginTop: 8, marginBottom: 0 }}
+              >
+                <input
+                  type='checkbox'
+                  checked={imageSpin}
+                  onChange={(e) => setImageSpin(e.target.checked)}
+                />
+                Spin it (unchecked = single static frame)
+              </label>
+            </div>
+
+            <div className='card-panel'>
+              <h4>Audio Reactive</h4>
+              <p className='muted' style={{ marginTop: -4 }}>
+                Records your mic for a few seconds into bar-chart frames you
+                can then edit, save, or export like anything else.
+              </p>
+              <div className='files'>
+                <label>
+                  Seconds:{' '}
+                  <input
+                    type='number'
+                    min={1}
+                    max={30}
+                    value={audioDuration}
+                    disabled={audioRecording}
+                    onChange={(e) => setAudioDuration(Number(e.target.value))}
+                    style={{ width: 50 }}
+                  />
+                </label>
+                {!audioRecording ? (
+                  <button className='btn-primary' onClick={startAudioRecording}>
+                    🎤 Record
+                  </button>
+                ) : (
+                  <button className='btn-danger' onClick={stopAudioRecording}>
+                    ⏹ Stop ({audioSecondsLeft}s left)
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className='card-panel'>
               <h4>Patterns</h4>
               <p className='muted' style={{ marginTop: -4 }}>
+                Procedural animations — respect the "Add to end of timeline"
+                toggle above.
               </p>
               <div className='files'>
                 <button onClick={startSpherePattern}>💠 Sphere</button>
@@ -945,6 +1374,11 @@ async function sendFrames() {
                   🔗 Edge Chase
                 </button>
                 <button onClick={startOrbitPattern}>🛰️ Orbit</button>
+              </div>
+              <div className='files' style={{ marginTop: 8 }}>
+                <button className='btn-primary' onClick={startRandomPattern}>
+                  🎲 Randomize
+                </button>
               </div>
             </div>
           </div>
@@ -1057,6 +1491,11 @@ async function sendFrames() {
                   <button className='btn-danger' onClick={clearAllFrames}>
                     🗑️ Clear All Frames
                   </button>
+                  <p className='muted' style={{ marginTop: 4 }}>
+                    Scroll Text / Spin Glyph / Spin Emoticon / Patterns now
+                    add to the end of the timeline by default — use this to
+                    start a fresh animation instead. (Undo works here too.)
+                  </p>
 
                   <h4>Presets</h4>
                   <p className='muted' style={{ marginTop: -4 }}>
@@ -1185,6 +1624,14 @@ async function sendFrames() {
                   >
                     Receiver Sketch
                   </button>
+
+                  <h4>Share</h4>
+                  <button onClick={exportVideo}>🎥 Export Video</button>
+                  <p className='muted' style={{ marginTop: 4 }}>
+                    Records one full loop of the 3D preview as a .webm
+                    video, for sharing without needing the physical cube on
+                    camera. Briefly takes over playback while recording.
+                  </p>
                 </div>
               )}
             </div>

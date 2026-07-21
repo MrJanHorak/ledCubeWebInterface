@@ -10,8 +10,12 @@ export default function CubeEditor({ frame, onChange, showToast }) {
   const [layerClipboard, setLayerClipboard] = useState(null);
 
   const localRef = useRef(local);
-  const paintingRef = useRef(false);
-  const paintValueRef = useRef(false);
+  const paintingRef = useRef(false); // true for the duration of any drag (freehand or rectangle)
+  const paintValueRef = useRef(false); // freehand: the value being painted
+  const rectModeRef = useRef(false);
+  const rectStartRef = useRef({ x: 0, z: 0 });
+  const rectBaseRef = useRef(null); // snapshot of `local` from before the rectangle drag began
+  const rectTargetRef = useRef(false);
 
   useEffect(() => {
     setLocal(frame ? frame.slice() : new Array(64).fill(0x00));
@@ -21,22 +25,23 @@ export default function CubeEditor({ frame, onChange, showToast }) {
     localRef.current = local;
   }, [local]);
 
-  // Click-and-drag painting: mousedown on a cell decides the value (the
-  // opposite of that cell's current state) and every cell the pointer
-  // crosses while held gets set to that same value. onChange only fires
-  // once, on release, so a whole drag stroke is a single undo step.
+  // Ends any drag (freehand paint or rectangle select) and commits once,
+  // whichever kind it was -- so a whole stroke is a single undo step.
   useEffect(() => {
     function finishPaint() {
       if (paintingRef.current) {
         paintingRef.current = false;
+        rectModeRef.current = false;
         if (onChange) onChange(localRef.current);
       }
     }
     window.addEventListener('mouseup', finishPaint);
     window.addEventListener('touchend', finishPaint);
+    window.addEventListener('touchcancel', finishPaint);
     return () => {
       window.removeEventListener('mouseup', finishPaint);
       window.removeEventListener('touchend', finishPaint);
+      window.removeEventListener('touchcancel', finishPaint);
     };
   }, [onChange]);
 
@@ -56,20 +61,72 @@ export default function CubeEditor({ frame, onChange, showToast }) {
     });
   }
 
-  function startPaint(x, z) {
+  // Recomputes the rectangle from rectBaseRef (the state before this drag
+  // started) each time, rather than accumulating -- so shrinking the
+  // rectangle back correctly un-does cells it had briefly covered.
+  function applyRectPreview(x, z) {
+    const base = rectBaseRef.current;
+    if (!base) return;
+    const mappedY = 7 - layer;
+    const { x: sx, z: sz } = rectStartRef.current;
+    const minX = Math.min(sx, x);
+    const maxX = Math.max(sx, x);
+    const minZ = Math.min(sz, z);
+    const maxZ = Math.max(sz, z);
+    const copy = base.slice();
+    for (let cx = minX; cx <= maxX; cx++) {
+      const idx = 8 * mappedY + cx;
+      for (let cz = minZ; cz <= maxZ; cz++) {
+        const mask = 1 << cz;
+        if (rectTargetRef.current) copy[idx] |= mask;
+        else copy[idx] &= ~mask;
+      }
+    }
+    setLocal(copy);
+  }
+
+  function startPaint(x, z, rectMode) {
     const mappedY = 7 - layer;
     const idx = 8 * mappedY + x;
     const mask = 1 << z;
     const currentlyOn = (local[idx] & mask) !== 0;
     const target = !currentlyOn;
     paintingRef.current = true;
-    paintValueRef.current = target;
-    applyCell(x, z, target);
+    if (rectMode) {
+      rectModeRef.current = true;
+      rectStartRef.current = { x, z };
+      rectBaseRef.current = local.slice();
+      rectTargetRef.current = target;
+      applyRectPreview(x, z);
+    } else {
+      rectModeRef.current = false;
+      paintValueRef.current = target;
+      applyCell(x, z, target);
+    }
   }
 
   function continuePaint(x, z) {
     if (!paintingRef.current) return;
-    applyCell(x, z, paintValueRef.current);
+    if (rectModeRef.current) {
+      applyRectPreview(x, z);
+    } else {
+      applyCell(x, z, paintValueRef.current);
+    }
+  }
+
+  // Touch move events keep firing on the element the finger first touched
+  // down on, not whatever's currently underneath it -- unlike mouse, there's
+  // no per-element "enter" event to lean on. Resolve the element under the
+  // finger manually so drag-across-cells (not just tap) works on touch.
+  function handleTouchMove(e) {
+    if (!paintingRef.current) return;
+    e.preventDefault();
+    const touch = e.touches && e.touches[0];
+    if (!touch) return;
+    const el = document.elementFromPoint(touch.clientX, touch.clientY);
+    if (el && el.dataset && el.dataset.x !== undefined) {
+      continuePaint(Number(el.dataset.x), Number(el.dataset.z));
+    }
   }
 
   // Single explicit toggle, used for keyboard access (Enter/Space) where
@@ -159,12 +216,17 @@ export default function CubeEditor({ frame, onChange, showToast }) {
           Paste Layer
         </button>
       </div>
+      <p className='muted' style={{ margin: '4px 0 0' }}>
+        Drag to paint several cells. Hold Shift and drag to fill a
+        rectangle instead.
+      </p>
 
       <div
         className='grid'
         role='grid'
         aria-label={`Front-to-back layer ${layer + 1} editor`}
         onDragStart={(e) => e.preventDefault()}
+        onTouchMove={handleTouchMove}
       >
         {/* rows are Z (0..7 top->bottom), columns are X (0..7 left->right) */}
         {/* Flip Z order to match 3D display orientation */}
@@ -183,16 +245,18 @@ export default function CubeEditor({ frame, onChange, showToast }) {
                   role='gridcell'
                   tabIndex={0}
                   aria-checked={on}
-                  title={`Toggle x=${x} z=${flippedZ} y=${mappedY + 1} (click-drag to paint several)`}
+                  data-x={x}
+                  data-z={flippedZ}
+                  title={`Toggle x=${x} z=${flippedZ} y=${mappedY + 1} (drag to paint, shift+drag to fill a box)`}
                   className={on ? 'cell on' : 'cell'}
                   onMouseDown={(e) => {
                     e.preventDefault();
-                    startPaint(x, flippedZ);
+                    startPaint(x, flippedZ, e.shiftKey);
                   }}
                   onMouseEnter={() => continuePaint(x, flippedZ)}
                   onTouchStart={(e) => {
                     e.preventDefault();
-                    startPaint(x, flippedZ);
+                    startPaint(x, flippedZ, false);
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {

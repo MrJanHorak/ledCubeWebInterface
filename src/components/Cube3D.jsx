@@ -203,7 +203,7 @@ export default function Cube3D({
 
     requestAnimationId = requestAnimationFrame(animate);
     // signal ready
-    if (onReady) onReady();
+    if (onReady) onReady(renderer.domElement);
 
     function handleResize() {
       const w = Math.max(1, mount.clientWidth);

@@ -1,5 +1,5 @@
 // Utilities to produce sample frames and convert frames to Arduino C arrays
-import { mirrorX, mirrorY } from './drawHelpers.js';
+import { mirrorX, mirrorY, rotateZ90 } from './drawHelpers.js';
 
 export function framesToCArray(frames, name) {
   if (!frames || frames.length === 0) return '// no frames';
@@ -54,170 +54,91 @@ export function generateSketch(name, frames) {
 }
 
 // Generate a receiver sketch that accepts frames over Serial with checksum/ACK
-// export function generateStreamingReceiverSketch() {
-//   const sketch = `// Streaming receiver sketch for LED Cube - receives frames over Serial
-// //
-// // IMPORTANT: This sketch must be the one currently flashed on your board
-// // for the "Send" button on the website to work. If your board is instead
-// // running your normal animation sketch (e.g. an exported ANIM.ino), it is
-// // not listening for serial data at all, and "Send" will appear to do
-// // nothing.
-// //
-// // IMPORTANT: displayFrame() below is a placeholder. This tool has no way
-// // to know how your specific cube is wired (shift registers, multiplexing,
-// // a driver library, etc.), so you must fill it in with whatever code
-// // already lights up your cube from a 64-byte frame buffer -- the same
-// // logic your working animation sketch uses, just called once per received
-// // frame instead of from a baked-in array.
-
-// #include <Arduino.h>
-
-// const uint8_t FRAME_MARKER = 0xF2;
-// const uint8_t ACK = 0xAA;
-// const uint8_t NACK = 0xFF;
-
-// // Replace this with your cube display function. "frame" is 64 bytes;
-// // frame[8*y + x] is a column, bit z of that byte is that column's z-th LED.
-// void displayFrame(const uint8_t *frame) {
-//   // TODO: map the 64-byte frame into your cube wiring and update outputs.
-//   // Example placeholder: blink onboard LED to indicate a frame was received.
-//   digitalWrite(LED_BUILTIN, HIGH);
-//   delay(20);
-//   digitalWrite(LED_BUILTIN, LOW);
-// }
-
-// void setup() {
-//   Serial.begin(38400);
-//   pinMode(LED_BUILTIN, OUTPUT);
-// }
-
-// void loop() {
-//   if (Serial.available() <= 0) return;
-//   int c = Serial.read();
-//   if (c != FRAME_MARKER) return; // also silently skips the open/close (0xAD/0xED) marker bytes
-
-//   // read 64 bytes for frame
-//   uint8_t buf[64];
-//   unsigned long start = millis();
-//   int got = 0;
-//   while (got < 64 && (millis() - start) < 1000) {
-//     if (Serial.available() > 0) {
-//       int v = Serial.read();
-//       if (v >= 0) buf[got++] = (uint8_t)v;
-//     }
-//   }
-//   if (got < 64) {
-//     Serial.write(NACK);
-//     return;
-//   }
-
-//   // read checksum (sum of the 64 data bytes, mod 256 -- matches what the
-//   // website's Send button computes and appends after each frame)
-//   start = millis();
-//   while (Serial.available() == 0 && (millis() - start) < 500) ;
-//   if (Serial.available() == 0) {
-//     Serial.write(NACK);
-//     return;
-//   }
-//   uint8_t checksum = (uint8_t)Serial.read();
-
-//   uint8_t sum = 0;
-//   for (int i = 0; i < 64; i++) sum += buf[i];
-//   if (sum != checksum) {
-//     Serial.write(NACK);
-//     return;
-//   }
-
-//   // valid frame - display it, THEN acknowledge. Acking first would let the
-//   // sender fire the next 66-byte frame while this board is still busy
-//   // inside displayFrame(); on boards with only a 64-byte serial RX buffer,
-//   // any real (non-trivial) displayFrame() implementation can then overflow
-//   // that buffer and silently drop bytes, corrupting the *next* frame's
-//   // checksum. Displaying first gives the sender correct backpressure.
-//   displayFrame(buf);
-//   Serial.write(ACK);
-// }`;
-
-//   return sketch;
-// }
-
 export function generateStreamingReceiverSketch() {
-  return `// Streaming receiver sketch for Zirrfa LED Cube - receives frames over Serial
+  const sketch = `// Streaming receiver sketch for LED Cube - receives frames over Serial
+//
+// IMPORTANT: This sketch must be the one currently flashed on your board
+// for the "Send" button on the website to work. If your board is instead
+// running your normal animation sketch (e.g. an exported ANIM.ino), it is
+// not listening for serial data at all, and "Send" will appear to do
+// nothing.
+//
+// IMPORTANT: displayFrame() below is a placeholder. This tool has no way
+// to know how your specific cube is wired (shift registers, multiplexing,
+// a driver library, etc.), so you must fill it in with whatever code
+// already lights up your cube from a 64-byte frame buffer -- the same
+// logic your working animation sketch uses, just called once per received
+// frame instead of from a baked-in array.
+
 #include <Arduino.h>
 
 const uint8_t FRAME_MARKER = 0xF2;
+const uint8_t ACK = 0xAA;
+const uint8_t NACK = 0xFF;
 
-// Hardcoded target pin configurations matching the 8x8x8 shift-register system
-const int columnPins[16] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, A0, A1, A2, A3};
-const int layerPins[4] = {A4, A5, 0, 1}; 
-
-uint8_t activeFrame[64];
-
+// Replace this with your cube display function. "frame" is 64 bytes;
+// frame[8*y + x] is a column, bit z of that byte is that column's z-th LED.
 void displayFrame(const uint8_t *frame) {
-  for (int layer = 0; layer < 4; layer++) {
-    digitalWrite(layerPins[layer], HIGH);
-    
-    for (int col = 0; col < 16; col++) {
-      int byteIdx = (layer * 16 + col) / 8;
-      int bitIdx = (layer * 16 + col) % 8;
-      bool state = (frame[byteIdx] & (1 << bitIdx)) != 0;
-      
-      digitalWrite(columnPins[col], state ? HIGH : LOW);
-    }
-    
-    delayMicroseconds(500); 
-    digitalWrite(layerPins[layer], LOW); 
-  }
+  // TODO: map the 64-byte frame into your cube wiring and update outputs.
+  // Example placeholder: blink onboard LED to indicate a frame was received.
+  digitalWrite(LED_BUILTIN, HIGH);
+  delay(20);
+  digitalWrite(LED_BUILTIN, LOW);
 }
 
 void setup() {
-  // Initialize communication matching your UI utility baud settings (38400)
   Serial.begin(38400);
-  delay(500);
-  
-  // Set up physical hardware controls
-  for(int i = 0; i < 16; i++) pinMode(columnPins[i], OUTPUT);
-  for(int i = 0; i < 4; i++) pinMode(layerPins[i], OUTPUT);
-  
-  // CRITICAL ZIRRFA HANDSHAKE: Wake up the interface latch channels!
-  for(int i=0; i<70; i++) {
-    Serial.write(0xAD);
-  }
-  delay(200);
-  
-  memset(activeFrame, 0, 64);
+  pinMode(LED_BUILTIN, OUTPUT);
 }
 
 void loop() {
-  // Keep the current animation frame illuminated continuously
-  displayFrame(activeFrame);
+  if (Serial.available() <= 0) return;
+  int c = Serial.read();
+  if (c != FRAME_MARKER) return; // also silently skips the open/close (0xAD/0xED) marker bytes
 
-  if (Serial.available() > 0) {
-    int c = Serial.peek();
-    
-    if (c == FRAME_MARKER) {
-      Serial.read(); // Consume the F2 marker byte
-      
-      uint8_t tempBuf[64];
-      int got = 0;
-      unsigned long start = millis();
-      
-      while (got < 64 && (millis() - start) < 100) {
-        if (Serial.available() > 0) {
-          tempBuf[got++] = (uint8_t)Serial.read();
-        }
-      }
-      
-      if (got == 64) {
-        memcpy(activeFrame, tempBuf, 64);
-      }
-    } else {
-      // Consume non-marker bytes (like structural 0xAD/0xED packets)
-      Serial.read();
+  // read 64 bytes for frame
+  uint8_t buf[64];
+  unsigned long start = millis();
+  int got = 0;
+  while (got < 64 && (millis() - start) < 1000) {
+    if (Serial.available() > 0) {
+      int v = Serial.read();
+      if (v >= 0) buf[got++] = (uint8_t)v;
     }
   }
-}
-`;
+  if (got < 64) {
+    Serial.write(NACK);
+    return;
+  }
+
+  // read checksum (sum of the 64 data bytes, mod 256 -- matches what the
+  // website's Send button computes and appends after each frame)
+  start = millis();
+  while (Serial.available() == 0 && (millis() - start) < 500) ;
+  if (Serial.available() == 0) {
+    Serial.write(NACK);
+    return;
+  }
+  uint8_t checksum = (uint8_t)Serial.read();
+
+  uint8_t sum = 0;
+  for (int i = 0; i < 64; i++) sum += buf[i];
+  if (sum != checksum) {
+    Serial.write(NACK);
+    return;
+  }
+
+  // valid frame - display it, THEN acknowledge. Acking first would let the
+  // sender fire the next 66-byte frame while this board is still busy
+  // inside displayFrame(); on boards with only a 64-byte serial RX buffer,
+  // any real (non-trivial) displayFrame() implementation can then overflow
+  // that buffer and silently drop bytes, corrupting the *next* frame's
+  // checksum. Displaying first gives the sender correct backpressure.
+  displayFrame(buf);
+  Serial.write(ACK);
+}`;
+
+  return sketch;
 }
 
 // ========== TEXT & GLYPH ANIMATION ==========
@@ -376,14 +297,14 @@ const CUBE8x8_FONT = {
   ',': [0x00, 0x80, 0x60, 0x00, 0x00],
 
   // Simple, tweak column values to refine appearance when previewing in 3D
-  SMILE: [0x3c, 0x42, 0xa9, 0x85, 0x85, 0xa9, 0x42, 0x3c],
-  SAD: [0x3c, 0x42, 0xa5, 0x89, 0x89, 0xa5, 0x42, 0x3c],
-  WINK: [0x3c, 0x42, 0x89, 0x85, 0x85, 0xa9, 0x42, 0x3c],
+  SMILE: [0x3C, 0x42, 0xA9, 0x85, 0x85, 0xA9, 0x42, 0x3C],
+  SAD: [0x3C, 0x42, 0xA5, 0x89, 0x89, 0xA5, 0x42, 0x3C],
+  WINK: [0x3C, 0x42, 0x89, 0x85, 0x85, 0xA9, 0x42, 0x3C],
   HEART: [0x3c, 0x46, 0x23, 0x23, 0x46, 0x3c],
-  SHOCK: [0x3c, 0x42, 0xa1, 0x8d, 0x8d, 0xa1, 0x42, 0x3c],
-  ANGRY: [0x3c, 0x42, 0xe5, 0x85, 0x85, 0xe5, 0x42, 0x3c],
-  BORED: [0x3c, 0x42, 0xa5, 0x85, 0x85, 0xa5, 0x42, 0x3c],
-  TONGUE: [0x3c, 0x42, 0xaf, 0x89, 0x89, 0xaf, 0x42, 0x3c],
+  SHOCK: [ 0x3C, 0x42, 0xA1, 0x8D, 0x8D, 0xA1, 0x42, 0x3C],
+  ANGRY: [0x3C, 0x42, 0xE5, 0x85, 0x85, 0xE5, 0x42, 0x3C],
+  BORED: [0x3C, 0x42, 0xA5, 0x85, 0x85, 0xA5, 0x42, 0x3C],
+  TONGUE: [0x3C, 0x42, 0xAF, 0x89, 0x89, 0xAF, 0x42, 0x3C],
 
   // Arrows
   ARROW_UP: [0x00, 0x20, 0x60, 0xff, 0xff, 0x60, 0x20, 0x00],
@@ -537,7 +458,6 @@ function renderColumnsToFace(glyph, face = 'front', thickness = 1) {
 }
 
 // Render a single glyph and produce animated frames
-import { rotateZ90 } from './drawHelpers.js';
 
 export function generateGlyphFrames(char = 'A', steps = 4, mode = 'flat') {
   const ch = String(char || ' ').toUpperCase();
@@ -566,7 +486,7 @@ function generate3DGlyphSpin(glyph, steps) {
   const charPattern = CUBE8x8_FONT[glyph.toUpperCase()] || CUBE8x8_FONT[' '];
 
   const CUBE_SIZE = 8;
-  const ACTUAL_WIDTH = charPattern.length;
+  const ACTUAL_WIDTH = charPattern.length; 
 
   // 1. DYNAMIC HEIGHT CALCULATOR
   // Scans the array values to check if any column uses all 8 vertical bits
@@ -574,7 +494,7 @@ function generate3DGlyphSpin(glyph, steps) {
   for (let col = 0; col < ACTUAL_WIDTH; col++) {
     const val = charPattern[col];
     for (let bit = 7; bit >= 0; bit--) {
-      if (val & (1 << bit) && bit > maxBitRow) {
+      if ((val & (1 << bit)) && bit > maxBitRow) {
         maxBitRow = bit;
       }
     }
@@ -585,10 +505,10 @@ function generate3DGlyphSpin(glyph, steps) {
   // Symmetrical centers across the 2D plane
   const centerX = 3.5;
   const centerY = 3.5;
-
+  
   // 2. DYNAMIC VERTICAL ALIGNMENT
   // Safely pins the bottom layer to index 0 if the icon fills all 8 layers
-  const charStartY = ACTUAL_HEIGHT >= 8 ? 0 : Math.round(4 - ACTUAL_HEIGHT / 2);
+  const charStartY = ACTUAL_HEIGHT >= 8 ? 0 : Math.round(4 - (ACTUAL_HEIGHT / 2));
 
   // Dynamic horizontal midpoint balancing
   const localCenter = (ACTUAL_WIDTH - 1) / 2;
@@ -597,27 +517,11 @@ function generate3DGlyphSpin(glyph, steps) {
   // in the 3D spin than the narrower letter glyphs -- this list is anything
   // in CUBE8x8_FONT that isn't a letter/number/punctuation character.
   const fullIconKeys = [
-    'SMILE',
-    'SAD',
-    'WINK',
-    'HEART',
-    'SHOCK',
-    'ANGRY',
-    'BORED',
-    'TONGUE',
-    'ARROW_UP',
-    'ARROW_DOWN',
-    'ARROW_LEFT',
-    'ARROW_RIGHT',
-    'SPADE',
-    'DIAMOND',
-    'CLUB',
-    'SNOWFLAKE',
-    'TREE',
-    'PUMPKIN',
-    'GHOST',
-    'PACMAN',
-    'INVADER',
+    'SMILE', 'SAD', 'WINK', 'HEART', 'SHOCK', 'ANGRY', 'BORED', 'TONGUE',
+    'ARROW_UP', 'ARROW_DOWN', 'ARROW_LEFT', 'ARROW_RIGHT',
+    'SPADE', 'DIAMOND', 'CLUB',
+    'SNOWFLAKE', 'TREE', 'PUMPKIN',
+    'GHOST', 'PACMAN', 'INVADER',
   ];
   const isEmoticon = fullIconKeys.includes(String(glyph).toUpperCase());
 
@@ -631,12 +535,13 @@ function generate3DGlyphSpin(glyph, steps) {
       // 3. FIX: Check all layers up to the dynamic character height limit
       for (let row = 0; row < ACTUAL_HEIGHT; row++) {
         if (columnData & (1 << row)) {
-          const charX = col - localCenter;
-          const charZ = isEmoticon ? row : ACTUAL_HEIGHT - 1 - row;
+          
+          const charX = col - localCenter; 
+          const charZ = isEmoticon ? row : (ACTUAL_HEIGHT - 1 - row); 
 
           // Thickness logic loop
           for (let thickness = 0; thickness < 2; thickness++) {
-            const charY = thickness - 0.5;
+            const charY = thickness - 0.5; 
 
             // Rotation equations
             const cosAngle = Math.cos(angle);
@@ -673,4 +578,34 @@ function generate3DGlyphSpin(glyph, steps) {
   }
 
   return frames;
+}
+// Places an 8-column bitmap directly on the front face (2 layers thick),
+// no font-centering offset -- used for imported images, which already
+// fill the full 8x8 width, unlike the narrower 5-wide font glyphs.
+// `columns[x]` is a byte whose bit z is lit if that pixel should be on;
+// bit 0 = bottom row, bit 7 = top row (matches the convention used by the
+// icon font and every procedural pattern in patterns.js).
+export function renderImageToFace(columns, thickness = 2) {
+  const frame = new Array(64).fill(0x00);
+  for (let x = 0; x < Math.min(8, columns.length); x++) {
+    const mask = columns[x] & 0xff;
+    frame[8 * 7 + x] = mask;
+    if (thickness > 1) frame[8 * 6 + x] = mask;
+  }
+  return frame;
+}
+
+// Builds an animation from an imported image's column data: a single
+// static frame, or (if spin is true) a short flat rotation around the
+// vertical axis, same idea as Spin Glyph's "flat" mode.
+export function generateImageFrames(columns, steps = 6, spin = true) {
+  const base = renderImageToFace(columns, 2);
+  if (!spin || steps <= 1) return [base];
+  const res = [base];
+  let cur = base;
+  for (let s = 1; s < steps; s++) {
+    cur = rotateZ90(cur);
+    res.push(cur.slice());
+  }
+  return res;
 }
