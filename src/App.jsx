@@ -49,6 +49,34 @@ import {
   generateOrbitFrames,
 } from './utils/patterns';
 
+function EffectAccordion({ title, open, onToggle, children }) {
+  return (
+    <div className='accordion-section'>
+      <button
+        type='button'
+        className={`accordion-header${open ? ' open' : ''}`}
+        onClick={onToggle}
+        aria-expanded={open}
+      >
+        {title}
+        <span className='chevron' aria-hidden='true'>
+          ▶
+        </span>
+      </button>
+      {open && <div className='accordion-body'>{children}</div>}
+    </div>
+  );
+}
+
+function drawImageCover(ctx, img, size = 8) {
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, size, size);
+  const scale = Math.max(size / img.width, size / img.height);
+  const w = img.width * scale;
+  const h = img.height * scale;
+  ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+}
+
 function loadAutosave() {
   try {
     const saved = localStorage.getItem('ledcube-autosave');
@@ -110,6 +138,16 @@ export default function App() {
   const [emoticon, setEmoticon] = useState('SMILE');
   const [imageThreshold, setImageThreshold] = useState(128);
   const [imageSpin, setImageSpin] = useState(true);
+  const [imageInvert, setImageInvert] = useState(false);
+  const imageInputRef = useRef(null);
+  const [openSections, setOpenSections] = useState({
+    text: true,
+    image: false,
+    audio: false,
+    patterns: false,
+  });
+  const toggleSection = (id) =>
+    setOpenSections((sections) => ({ ...sections, [id]: !sections[id] }));
   const [audioRecording, setAudioRecording] = useState(false);
   const [audioSecondsLeft, setAudioSecondsLeft] = useState(0);
   const [audioDuration, setAudioDuration] = useState(6);
@@ -444,11 +482,7 @@ export default function App() {
           canvas.width = 8;
           canvas.height = 8;
           const ctx = canvas.getContext('2d');
-          // white background first so transparent pixels read as "off"
-          // rather than picking up whatever was previously on the canvas
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, 8, 8);
-          ctx.drawImage(img, 0, 0, 8, 8);
+          drawImageCover(ctx, img, 8);
           const data = ctx.getImageData(0, 0, 8, 8).data;
           const columns = new Array(8).fill(0);
           for (let row = 0; row < 8; row++) {
@@ -459,12 +493,19 @@ export default function App() {
               const b = data[idx + 2];
               const a = data[idx + 3];
               const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-              const on = a > 32 && luminance < imageThreshold;
+              const on = imageInvert
+                ? a > 32 && luminance >= imageThreshold
+                : a > 32 && luminance < imageThreshold;
               if (on) {
-                const z = 7 - row; // image top -> cube top
+                const z = 7 - row;
                 columns[x] |= 1 << z;
               }
             }
+          }
+          if (columns.every((mask) => mask === 0)) {
+            return showToast(
+              'No lit pixels — try adjusting threshold or enable Invert',
+            );
           }
           const imgFrames = generateImageFrames(columns, 6, imageSpin);
           appendOrReplaceFrames(imgFrames, 'Image Import');
@@ -475,8 +516,9 @@ export default function App() {
       img.onerror = () => showToast('Could not load that image');
       img.src = e.target.result;
     };
+    reader.onerror = () => showToast('Could not read that file');
     reader.readAsDataURL(file);
-    ev.target.value = ''; // allow re-selecting the same file later
+    ev.target.value = '';
   }
 
   async function startAudioRecording() {
@@ -1001,16 +1043,18 @@ export default function App() {
             </span>
           )}
         </div>
-        <button
-          className='help-toggle'
-          onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-          title='Toggle light/dark theme'
-        >
-          {theme === 'dark' ? '☀️' : '🌙'}
-        </button>
-        <button className='help-toggle' onClick={() => setShowHelp(true)}>
-          ?
-        </button>
+        <div className='header-actions'>
+          <button
+            className='help-toggle'
+            onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+            title='Toggle light/dark theme'
+          >
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
+          <button className='help-toggle' onClick={() => setShowHelp(true)}>
+            ?
+          </button>
+        </div>
       </header>
 
       <main>
@@ -1052,37 +1096,41 @@ export default function App() {
               ))}
             </div>
             <div className='playback-bar'>
-              <button onClick={() => setCurrent((c) => Math.max(0, c - 1))}>
-                ◀
-              </button>
-              <button
-                className='btn-primary'
-                onClick={() => setPlaying((p) => !p)}
-              >
-                {playing ? 'Pause' : 'Play'}
-              </button>
-              <button
-                onClick={() =>
-                  setCurrent((c) => Math.min(frames.length - 1, c + 1))
-                }
-              >
-                ▶
-              </button>
-              <button
-                onClick={() => setPlayDirection((d) => -d)}
-                title={
-                  playDirection === 1
-                    ? 'Playing forward — click to reverse'
-                    : 'Playing in reverse — click for forward'
-                }
-              >
-                {playDirection === 1 ? '⇥ Forward' : '⇤ Reverse'}
-              </button>
+              <div className='playback-group'>
+                <button onClick={() => setCurrent((c) => Math.max(0, c - 1))}>
+                  ◀
+                </button>
+                <button
+                  className='btn-primary'
+                  onClick={() => setPlaying((p) => !p)}
+                >
+                  {playing ? 'Pause' : 'Play'}
+                </button>
+                <button
+                  onClick={() =>
+                    setCurrent((c) => Math.min(frames.length - 1, c + 1))
+                  }
+                >
+                  ▶
+                </button>
+                <button
+                  onClick={() => setPlayDirection((d) => -d)}
+                  title={
+                    playDirection === 1
+                      ? 'Playing forward — click to reverse'
+                      : 'Playing in reverse — click for forward'
+                  }
+                >
+                  {playDirection === 1 ? '⇥ Forward' : '⇤ Reverse'}
+                </button>
+              </div>
+              <span className='playback-divider' aria-hidden='true' />
               <span className='time-indicator'>
                 Frame {current + 1} / {frames.length}
               </span>
+              <span className='playback-divider' aria-hidden='true' />
               <label>
-                Delay (ms):{' '}
+                Delay (ms):
                 <input
                   type='number'
                   value={delayMs}
@@ -1091,7 +1139,7 @@ export default function App() {
                 />
               </label>
               <label title="Override just this frame's hold time (blank = use the Delay above)">
-                Frame hold (ms):{' '}
+                Frame hold (ms):
                 <input
                   type='number'
                   placeholder={String(delayMs)}
@@ -1115,32 +1163,31 @@ export default function App() {
               >
                 Use Default
               </button>
-              <button
-                onClick={undo}
-                disabled={undoStack.current.length === 0}
-                title='Undo (Ctrl+Z)'
-              >
-                ↺ Undo
-              </button>
-              <button
-                onClick={redo}
-                disabled={redoStack.current.length === 0}
-                title='Redo (Ctrl+Shift+Z)'
-              >
-                ↻ Redo
-              </button>
+              <span className='playback-divider' aria-hidden='true' />
+              <div className='playback-group'>
+                <button
+                  onClick={undo}
+                  disabled={undoStack.current.length === 0}
+                  title='Undo (Ctrl+Z)'
+                >
+                  ↺ Undo
+                </button>
+                <button
+                  onClick={redo}
+                  disabled={redoStack.current.length === 0}
+                  title='Redo (Ctrl+Shift+Z)'
+                >
+                  ↻ Redo
+                </button>
+              </div>
             </div>
           </div>
         </div>
 
         <div className='centered-row'>
           <div className='left-column'>
-            <div className='text-animate card-panel'>
-              <h4>Text & Glyph Animation</h4>
-              <label
-                className='onion-toggle'
-                style={{ marginTop: 0, marginBottom: 12 }}
-              >
+            <div className='effects-global-toggle'>
+              <label className='onion-toggle' style={{ margin: 0 }}>
                 <input
                   type='checkbox'
                   checked={appendMode}
@@ -1148,7 +1195,14 @@ export default function App() {
                 />
                 Add to end of timeline (unchecked replaces it)
               </label>
-              <div style={{ marginBottom: 10 }}>
+            </div>
+
+            <EffectAccordion
+              title='Text & Glyph Animation'
+              open={openSections.text}
+              onToggle={() => toggleSection('text')}
+            >
+              <div className='form-row'>
                 <input
                   type='text'
                   value={textInput}
@@ -1159,9 +1213,9 @@ export default function App() {
                   Scroll Text
                 </button>
               </div>
-              <div style={{ marginBottom: 10 }}>
+              <div className='form-row'>
                 <label>
-                  Number of Sides to display text:{' '}
+                  Sides:
                   <input
                     type='number'
                     min={1}
@@ -1172,7 +1226,7 @@ export default function App() {
                   />
                 </label>
               </div>
-              <div>
+              <div className='form-row'>
                 <input
                   type='text'
                   value={glyphInput}
@@ -1192,75 +1246,78 @@ export default function App() {
                   <option value='flat'>Flat</option>
                   <option value='3d'>3D</option>
                 </select>
-                {/* Emoticon selector - uses 3D spinner */}
-                <div style={{ marginTop: 8 }}>
-                  <select
-                    value={emoticon}
-                    onChange={(e) => setEmoticon(e.target.value)}
-                  >
-                    <optgroup label='Emoticons'>
-                      <option value='SMILE'>🙂 SMILE</option>
-                      <option value='SAD'>☹️ SAD</option>
-                      <option value='WINK'>😉 WINK</option>
-                      <option value='HEART'>💗 HEART</option>
-                      <option value='SHOCK'>😮 SHOCK</option>
-                      <option value='ANGRY'>😡 ANGRY</option>
-                      <option value='BORED'>🫩 BORED</option>
-                      <option value='TONGUE'>😛 TONGUE</option>
-                    </optgroup>
-                    <optgroup label='Arrows'>
-                      <option value='ARROW_UP'>⬆️ ARROW UP</option>
-                      <option value='ARROW_DOWN'>⬇️ ARROW DOWN</option>
-                      <option value='ARROW_LEFT'>⬅️ ARROW LEFT</option>
-                      <option value='ARROW_RIGHT'>➡️ ARROW RIGHT</option>
-                    </optgroup>
-                    <optgroup label='Card Suits'>
-                      <option value='SPADE'>♠️ SPADE</option>
-                      <option value='DIAMOND'>♦️ DIAMOND</option>
-                      <option value='CLUB'>♣️ CLUB</option>
-                    </optgroup>
-                    <optgroup label='Seasonal'>
-                      <option value='SNOWFLAKE'>❄️ SNOWFLAKE</option>
-                      <option value='TREE'>🎄 TREE</option>
-                      <option value='PUMPKIN'>🎃 PUMPKIN</option>
-                    </optgroup>
-                    <optgroup label='Retro'>
-                      <option value='GHOST'>👻 GHOST</option>
-                      <option value='PACMAN'>🟡 PAC-MAN</option>
-                      <option value='INVADER'>👾 INVADER</option>
-                    </optgroup>
-                  </select>
-                  <button
-                    className='btn-primary'
-                    onClick={startEmoticonSpin}
-                    style={{ marginLeft: 8 }}
-                  >
-                    Spin Selected Icon
-                  </button>
-                </div>
               </div>
-            </div>
+              <div className='form-row'>
+                <select
+                  value={emoticon}
+                  onChange={(e) => setEmoticon(e.target.value)}
+                  style={{ flex: '1 1 140px' }}
+                >
+                  <optgroup label='Emoticons'>
+                    <option value='SMILE'>🙂 SMILE</option>
+                    <option value='SAD'>☹️ SAD</option>
+                    <option value='WINK'>😉 WINK</option>
+                    <option value='HEART'>💗 HEART</option>
+                    <option value='SHOCK'>😮 SHOCK</option>
+                    <option value='ANGRY'>😡 ANGRY</option>
+                    <option value='BORED'>🫩 BORED</option>
+                    <option value='TONGUE'>😛 TONGUE</option>
+                  </optgroup>
+                  <optgroup label='Arrows'>
+                    <option value='ARROW_UP'>⬆️ ARROW UP</option>
+                    <option value='ARROW_DOWN'>⬇️ ARROW DOWN</option>
+                    <option value='ARROW_LEFT'>⬅️ ARROW LEFT</option>
+                    <option value='ARROW_RIGHT'>➡️ ARROW RIGHT</option>
+                  </optgroup>
+                  <optgroup label='Card Suits'>
+                    <option value='SPADE'>♠️ SPADE</option>
+                    <option value='DIAMOND'>♦️ DIAMOND</option>
+                    <option value='CLUB'>♣️ CLUB</option>
+                  </optgroup>
+                  <optgroup label='Seasonal'>
+                    <option value='SNOWFLAKE'>❄️ SNOWFLAKE</option>
+                    <option value='TREE'>🎄 TREE</option>
+                    <option value='PUMPKIN'>🎃 PUMPKIN</option>
+                  </optgroup>
+                  <optgroup label='Retro'>
+                    <option value='GHOST'>👻 GHOST</option>
+                    <option value='PACMAN'>🟡 PAC-MAN</option>
+                    <option value='INVADER'>👾 INVADER</option>
+                  </optgroup>
+                </select>
+                <button className='btn-primary' onClick={startEmoticonSpin}>
+                  Spin Icon
+                </button>
+              </div>
+            </EffectAccordion>
 
-            <div className='card-panel'>
-              <h4>Import Image</h4>
-              <p className='muted' style={{ marginTop: -4 }}>
-                Downsampled to 8×8 and thresholded to on/off — also respects
-                "Add to end of timeline" above.
+            <EffectAccordion
+              title='Import Image'
+              open={openSections.image}
+              onToggle={() => toggleSection('image')}
+            >
+              <p className='muted'>
+                Downsampled to 8×8 and thresholded to on/off pixels.
               </p>
-              <div className='files'>
-                <label>
-                  <input
-                    type='file'
-                    accept='image/*'
-                    onChange={handleImageImport}
-                    style={{ display: 'none' }}
-                  />
-                  <button as='span'>🖼️ Choose Image…</button>
-                </label>
+              <input
+                ref={imageInputRef}
+                type='file'
+                accept='image/*'
+                onChange={handleImageImport}
+                style={{ display: 'none' }}
+              />
+              <div className='form-row'>
+                <button
+                  type='button'
+                  className='btn-primary'
+                  onClick={() => imageInputRef.current?.click()}
+                >
+                  🖼️ Choose Image…
+                </button>
               </div>
-              <div style={{ marginTop: 8 }}>
-                <label>
-                  Threshold:{' '}
+              <div className='form-row'>
+                <label style={{ flex: '1 1 100%' }}>
+                  Threshold: {imageThreshold}
                   <input
                     type='range'
                     min={0}
@@ -1269,14 +1326,19 @@ export default function App() {
                     onChange={(e) =>
                       setImageThreshold(Number(e.target.value))
                     }
-                  />{' '}
-                  {imageThreshold}
+                    style={{ width: '100%', marginTop: 4 }}
+                  />
                 </label>
               </div>
-              <label
-                className='onion-toggle'
-                style={{ marginTop: 8, marginBottom: 0 }}
-              >
+              <label className='onion-toggle' style={{ marginTop: 0 }}>
+                <input
+                  type='checkbox'
+                  checked={imageInvert}
+                  onChange={(e) => setImageInvert(e.target.checked)}
+                />
+                Invert (for light-on-dark images)
+              </label>
+              <label className='onion-toggle'>
                 <input
                   type='checkbox'
                   checked={imageSpin}
@@ -1284,17 +1346,19 @@ export default function App() {
                 />
                 Spin it (unchecked = single static frame)
               </label>
-            </div>
+            </EffectAccordion>
 
-            <div className='card-panel'>
-              <h4>Audio Reactive</h4>
-              <p className='muted' style={{ marginTop: -4 }}>
-                Records your mic for a few seconds into bar-chart frames you
-                can then edit, save, or export like anything else.
+            <EffectAccordion
+              title='Audio Reactive'
+              open={openSections.audio}
+              onToggle={() => toggleSection('audio')}
+            >
+              <p className='muted'>
+                Records your mic into bar-chart frames you can edit or export.
               </p>
-              <div className='files'>
+              <div className='form-row'>
                 <label>
-                  Seconds:{' '}
+                  Seconds:
                   <input
                     type='number'
                     min={1}
@@ -1315,74 +1379,59 @@ export default function App() {
                   </button>
                 )}
               </div>
-            </div>
+            </EffectAccordion>
 
-            <div className='card-panel'>
-              <h4>Patterns</h4>
-              <p className='muted' style={{ marginTop: -4 }}>
-                Procedural animations — respect the "Add to end of timeline"
-                toggle above.
-              </p>
-              <div className='files'>
+            <EffectAccordion
+              title='Patterns'
+              open={openSections.patterns}
+              onToggle={() => toggleSection('patterns')}
+            >
+              <p className='muted'>Procedural animations for the timeline.</p>
+              <div className='pattern-grid'>
                 <button onClick={startSpherePattern}>💠 Sphere</button>
                 <button onClick={startRainPattern}>🌧️ Rain</button>
-              </div>
-              <div className='files' style={{ marginTop: 8 }}>
-                <select
-                  value={scannerAxis}
-                  onChange={(e) => setScannerAxis(e.target.value)}
-                >
-                  <option value='z'>Z axis</option>
-                  <option value='x'>X axis</option>
-                  <option value='y'>Y axis</option>
-                </select>
-                <button onClick={startScannerPattern}>📡 Scanner</button>
+                <div className='pattern-span-2'>
+                  <select
+                    value={scannerAxis}
+                    onChange={(e) => setScannerAxis(e.target.value)}
+                  >
+                    <option value='z'>Z axis</option>
+                    <option value='x'>X axis</option>
+                    <option value='y'>Y axis</option>
+                  </select>
+                  <button onClick={startScannerPattern}>📡 Scanner</button>
+                </div>
                 <button onClick={startSparklePattern}>✨ Sparkle</button>
-              </div>
-              <div className='files' style={{ marginTop: 8 }}>
                 <button onClick={startWireframeCubePattern}>
                   🧊 Wireframe Cube
                 </button>
                 <button onClick={startSpiralPattern}>🌀 Spiral</button>
-              </div>
-              <div className='files' style={{ marginTop: 8 }}>
                 <button onClick={startBouncingBallPattern}>
                   🏓 Bouncing Ball
                 </button>
                 <button onClick={startFireworksPattern}>🎆 Fireworks</button>
-              </div>
-              <div className='files' style={{ marginTop: 8 }}>
                 <button onClick={startExpandingCubePattern}>
                   📦 Expanding Cube
                 </button>
                 <button onClick={startWavePattern}>🌊 Wave</button>
-              </div>
-              <div className='files' style={{ marginTop: 8 }}>
                 <button onClick={startSnakePattern}>🐍 Snake</button>
-                <button onClick={startFillDrainPattern}>
-                  🥤 Fill / Drain
-                </button>
-              </div>
-              <div className='files' style={{ marginTop: 8 }}>
+                <button onClick={startFillDrainPattern}>🥤 Fill / Drain</button>
                 <button onClick={startCheckerboardPattern}>
                   🏁 Checkerboard
                 </button>
                 <button onClick={startDiagonalScannerPattern}>
                   ↗️ Diagonal Scanner
                 </button>
-              </div>
-              <div className='files' style={{ marginTop: 8 }}>
-                <button onClick={startEdgeChasePattern}>
-                  🔗 Edge Chase
-                </button>
+                <button onClick={startEdgeChasePattern}>🔗 Edge Chase</button>
                 <button onClick={startOrbitPattern}>🛰️ Orbit</button>
-              </div>
-              <div className='files' style={{ marginTop: 8 }}>
-                <button className='btn-primary' onClick={startRandomPattern}>
+                <button
+                  className='btn-primary pattern-span-2'
+                  onClick={startRandomPattern}
+                >
                   🎲 Randomize
                 </button>
               </div>
-            </div>
+            </EffectAccordion>
           </div>
 
           <div className='left'>
@@ -1418,39 +1467,43 @@ export default function App() {
             <div className='sidebar-content'>
               {activeTab === 'playback' && (
                 <div>
-                  <button onClick={addBlankFrame}>➕ New Frame</button>
-                  <button onClick={duplicateFrame}>📋 Duplicate</button>
-                  <button onClick={copyFrame}>Copy Frame</button>
-                  <button onClick={pasteFrame} disabled={!frameClipboard}>
-                    Paste Frame
-                  </button>
-                  <button className='btn-danger' onClick={deleteFrame}>
-                    🗑️ Delete
-                  </button>
-                  <button onClick={insertTransition}>Insert Transition</button>
-                  <label>
-                    Steps:{' '}
-                    <input
-                      type='number'
-                      value={transitionSteps}
-                      onChange={(e) =>
-                        setTransitionSteps(Number(e.target.value))
-                      }
-                      style={{ width: 50 }}
-                    />
-                  </label>
-                  <label>
-                    Easing:{' '}
-                    <select
-                      value={transitionEasing}
-                      onChange={(e) => setTransitionEasing(e.target.value)}
-                    >
-                      <option value='linear'>Linear</option>
-                      <option value='easeIn'>Ease In</option>
-                      <option value='easeOut'>Ease Out</option>
-                      <option value='easeInOut'>Ease In-Out</option>
-                    </select>
-                  </label>
+                  <div className='btn-row'>
+                    <button onClick={addBlankFrame}>➕ New Frame</button>
+                    <button onClick={duplicateFrame}>📋 Duplicate</button>
+                    <button onClick={copyFrame}>Copy Frame</button>
+                    <button onClick={pasteFrame} disabled={!frameClipboard}>
+                      Paste Frame
+                    </button>
+                    <button className='btn-danger' onClick={deleteFrame}>
+                      🗑️ Delete
+                    </button>
+                  </div>
+                  <div className='form-row'>
+                    <button onClick={insertTransition}>Insert Transition</button>
+                    <label>
+                      Steps:
+                      <input
+                        type='number'
+                        value={transitionSteps}
+                        onChange={(e) =>
+                          setTransitionSteps(Number(e.target.value))
+                        }
+                        style={{ width: 50 }}
+                      />
+                    </label>
+                    <label>
+                      Easing:
+                      <select
+                        value={transitionEasing}
+                        onChange={(e) => setTransitionEasing(e.target.value)}
+                      >
+                        <option value='linear'>Linear</option>
+                        <option value='easeIn'>Ease In</option>
+                        <option value='easeOut'>Ease Out</option>
+                        <option value='easeInOut'>Ease In-Out</option>
+                      </select>
+                    </label>
+                  </div>
                 </div>
               )}
 
