@@ -26,6 +26,36 @@ export async function closePort(port) {
   }
 }
 
+// Wireless WebSocket helpers for ESP32 devices
+export function openWebSocket(url = 'ws://192.168.4.1:81') {
+  return new Promise((resolve, reject) => {
+    try {
+      const socket = new WebSocket(url);
+      socket.binaryType = 'arraybuffer';
+      socket.onopen = () => resolve(socket);
+      socket.onerror = (err) => reject(err);
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+export function writeToWebSocket(socket, data) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    throw new Error('WebSocket is not connected');
+  }
+  socket.send(data);
+}
+
+export function closeWebSocket(socket) {
+  if (socket) {
+    try {
+      socket.close();
+    } catch (e) {}
+  }
+}
+
+
 // Wraps a ReadableStreamDefaultReader so callers can pull one byte at a time
 // with a timeout, WITHOUT ever having more than one reader.read() call
 // in flight. This matters: reader.read() queues concurrent calls and

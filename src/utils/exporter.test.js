@@ -4,6 +4,9 @@ import {
   generateGlyphFrames,
   renderImageToFace,
   generateImageFrames,
+  generateESP32Sketch,
+  generateESP32LiveRelaySketch,
+  generateESP32WiFiRelaySketch,
 } from './exporter';
 
 const sampleFrame = new Array(64).fill(0).map((_, i) => i % 256);
@@ -24,6 +27,29 @@ describe('framesToCArray', () => {
     expect(out).toContain('// no frames');
   });
 });
+
+describe('ESP32 sketch generators', () => {
+  it('generates valid ESP32 flash sketch with pgmspace.h', () => {
+    const out = generateESP32Sketch('TEST', [sampleFrame]);
+    expect(out).toContain('#include <pgmspace.h>');
+    expect(out).toContain('const byte TEST[1][64] PROGMEM = {');
+    expect(out).toContain('Serial.begin(38400);');
+  });
+
+  it('generates valid ESP32 live relay sketch', () => {
+    const out = generateESP32LiveRelaySketch();
+    expect(out).toContain('Live Relay Sketch for ESP32');
+    expect(out).toContain('Serial.begin(38400);');
+  });
+
+  it('generates valid ESP32 Wi-Fi relay sketch', () => {
+    const out = generateESP32WiFiRelaySketch();
+    expect(out).toContain('#include <WiFi.h>');
+    expect(out).toContain('#include <WebSocketsServer.h>');
+    expect(out).toContain('WebSocketsServer webSocket = WebSocketsServer(81);');
+  });
+});
+
 
 describe('generateGlyphFrames (3D icon set)', () => {
   const icons = [

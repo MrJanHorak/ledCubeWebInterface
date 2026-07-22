@@ -97,6 +97,119 @@ void loop() {
   return sketch;
 }
 
+export function generateESP32Sketch(name, frames) {
+  let arr = framesToCArray(frames, name);
+  const header = `const byte ${name}[${frames.length}][64] = {`;
+  const headerProg = `const byte ${name}[${frames.length}][64] PROGMEM = {`;
+  arr = arr.replace(header, headerProg);
+
+  return `// Generated ESP32 sketch for ${name}
+// Flashes animation into ESP32 flash memory (PROGMEM)
+
+#include <Arduino.h>
+#include <pgmspace.h>
+
+${arr}
+
+// Send one frame stored in PROGMEM (framePtr points to 64 bytes)
+void sendFrameFromPROGMEM(const uint8_t *framePtr) {
+  Serial.write(0xF2);
+  for (int i = 0; i < 64; i++) {
+    uint8_t b = pgm_read_byte(framePtr + i);
+    Serial.write(b);
+  }
+}
+
+void setup() {
+  // Initialize Hardware Serial for USB / Cube connection at 38400 baud
+  Serial.begin(38400);
+  delay(500);
+  // Send open command handshake (0xAD)
+  for (int i = 0; i < 70; i++) {
+    Serial.write(0xAD);
+  }
+  delay(200);
+}
+
+void loop() {
+  for (int f = 0; f < ${name}_FRAME_COUNT; f++) {
+    const uint8_t *framePtr = ${name}[f];
+    sendFrameFromPROGMEM(framePtr);
+    delay(200);
+  }
+}
+`;
+}
+
+export function generateESP32LiveRelaySketch() {
+  return `// Live Relay Sketch for ESP32 (USB WebSerial to LED Cube)
+//
+// Relays bytes received over USB Serial straight to hardware UART or USB Serial output
+// for real-time 8x8x8 LED cube frame streaming.
+
+#include <Arduino.h>
+
+void setup() {
+  Serial.begin(38400);
+}
+
+void loop() {
+  if (Serial.available() > 0) {
+    uint8_t b = Serial.read();
+    Serial.write(b);
+  }
+}
+`;
+}
+
+export function generateESP32WiFiRelaySketch() {
+  return `// ESP32 Wireless Wi-Fi WebSockets Relay Sketch for LED Cube
+//
+// Connects ESP32 to Wi-Fi (or creates an Access Point) and starts a WebSocket server.
+// Web app streams LED cube frames wirelessly over WebSockets, which ESP32 forwards
+// to the LED Cube controller over Serial.
+//
+// Dependencies: WebSockets library by Markus Sattler (install via Arduino Library Manager)
+
+#include <WiFi.h>
+#include <WebSocketsServer.h>
+
+const char* ssid = "LED_Cube_AP";
+const char* password = "ledcube123";
+
+WebSocketsServer webSocket = WebSocketsServer(81);
+
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
+  if (type == WStype_BIN) {
+    // Binary WebSocket message containing cube frame data
+    for (size_t i = 0; i < length; i++) {
+      Serial.write(payload[i]);
+    }
+  } else if (type == WStype_TEXT) {
+    if (payload[0] == 'P' && payload[1] == 'I' && payload[2] == 'N' && payload[3] == 'G') {
+      webSocket.sendTXT(num, "PONG");
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(38400);
+
+  // Start Access Point
+  WiFi.softAP(ssid, password);
+
+  // Start WebSocket server on port 81
+  webSocket.begin();
+  webSocket.onEvent(webSocketEvent);
+}
+
+void loop() {
+  webSocket.loop();
+}
+`;
+}
+
+
 // ========== TEXT & GLYPH ANIMATION ==========
 
 // Simple 5x7 font (columns, LSB = top row)

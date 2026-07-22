@@ -7,6 +7,9 @@ import {
   openPort,
   writeToPort,
   closePort,
+  openWebSocket,
+  writeToWebSocket,
+  closeWebSocket,
 } from './utils/serial';
 import {
   framesToCArray,
@@ -16,6 +19,9 @@ import {
   generateGlyphFrames,
   generateStreamingReceiverSketch,
   generateImageFrames,
+  generateESP32Sketch,
+  generateESP32LiveRelaySketch,
+  generateESP32WiFiRelaySketch,
 } from './utils/exporter';
 import {
   mirrorX,
@@ -88,6 +94,10 @@ export default function App() {
     return auto && typeof auto.delayMs === 'number' ? auto.delayMs : 300;
   });
   const [serialPort, setSerialPort] = useState(null);
+  const [targetDevice, setTargetDevice] = useState('arduino'); // 'arduino' | 'esp32'
+  const [connectionMode, setConnectionMode] = useState('serial'); // 'serial' | 'wifi'
+  const [wifiIp, setWifiIp] = useState('192.168.4.1');
+  const [webSocket, setWebSocket] = useState(null);
   const [connecting, setConnecting] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
@@ -864,25 +874,49 @@ export default function App() {
       navigator.serial.removeEventListener('disconnect', handleDisconnect);
   }, [serialPort]);
 
+  async function connectWiFi() {
+    try {
+      setConnecting(true);
+      const url = wifiIp.startsWith('ws://') ? wifiIp : `ws://${wifiIp}:81`;
+      showToast(`Connecting to ESP32 Wi-Fi at ${url}…`);
+      const ws = await openWebSocket(url);
+      setWebSocket(ws);
+      setConnecting(false);
+      showToast('Connected to ESP32 Wi-Fi WebSocket');
+    } catch (e) {
+      setConnecting(false);
+      showToast('ESP32 Wi-Fi WebSocket connection failed');
+    }
+  }
+
+  function disconnectWiFi() {
+    if (!webSocket) return;
+    streamingRef.current = false;
+    setStreaming(false);
+    closeWebSocket(webSocket);
+    setWebSocket(null);
+    showToast('ESP32 Wi-Fi disconnected');
+  }
+
   const streamingRef = useRef(false);
 
-  // This cube's onboard controller does the real LED driving in its own
-  // firmware and falls back to its own built-in demo pattern whenever the
-  // live feed stops -- sending frames once and closing (the old behavior)
-  // looked identical to that from the controller's point of view. So this
-  // streams continuously, exactly like the exported ANIM.ino's loop() does:
-  // one open handshake, then 0xF2 + 64 raw bytes per frame forever, and it
-  // never sends the 0xED close command while running (that appears to be
-  // what tells the controller to give up and show its demo pattern).
   async function startStreaming() {
-    if (!serialPort) return showToast('No serial port connected');
+    if (connectionMode === 'serial' && !serialPort)
+      return showToast('No serial port connected');
+    if (connectionMode === 'wifi' && (!webSocket || webSocket.readyState !== WebSocket.OPEN))
+      return showToast('ESP32 Wi-Fi WebSocket is not connected');
+
     if (streamingRef.current) return;
     if (!frames.length) return showToast('Nothing to stream');
     streamingRef.current = true;
     setStreaming(true);
     try {
       const openCmd = new Uint8Array(70).fill(0xad);
-      await writeToPort(serialPort, openCmd);
+      if (connectionMode === 'serial') {
+        await writeToPort(serialPort, openCmd);
+      } else {
+        writeToWebSocket(webSocket, openCmd);
+      }
       showToast('Streaming live — leave this tab open');
 
       let i = 0;
@@ -892,7 +926,12 @@ export default function App() {
         const buf = new Uint8Array(65);
         buf[0] = 0xf2;
         for (let b = 0; b < 64; b++) buf[b + 1] = transformedFrame[b] || 0;
-        await writeToPort(serialPort, buf);
+
+        if (connectionMode === 'serial') {
+          await writeToPort(serialPort, buf);
+        } else {
+          writeToWebSocket(webSocket, buf);
+        }
 
         const holdMs = frameDelays[idx];
         const effectiveMs = typeof holdMs === 'number' ? holdMs : delayMs;
@@ -936,6 +975,32 @@ export default function App() {
     <div className='app-full'>
       <header>
         <h1>LED Cube Designer</h1>
+        <div className="header-status-badge">
+          <span
+            className="device-tag"
+            onClick={() => setTargetDevice((d) => (d === 'arduino' ? 'esp32' : 'arduino'))}
+            title="Click to switch Target Microcontroller"
+          >
+            ⚡ {targetDevice === 'esp32' ? 'ESP32' : 'Arduino (AVR)'}
+          </span>
+          {streaming ? (
+            <span className="conn-tag streaming">
+              <span className="dot"></span> Streaming
+            </span>
+          ) : connectionMode === 'wifi' && webSocket ? (
+            <span className="conn-tag active">
+              <span className="dot"></span> Wi-Fi
+            </span>
+          ) : serialPort ? (
+            <span className="conn-tag active">
+              <span className="dot"></span> USB
+            </span>
+          ) : (
+            <span className="conn-tag">
+              <span className="dot"></span> Offline
+            </span>
+          )}
+        </div>
         <button
           className='help-toggle'
           onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
@@ -1491,49 +1556,132 @@ export default function App() {
                     <button onClick={saveJSON}>Save JSON</button>
                   </div>
 
-                  <h4>Serial</h4>
+                  <h4>Target Device</h4>
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+                    <button
+                      className={targetDevice === 'arduino' ? 'btn-primary' : ''}
+                      onClick={() => setTargetDevice('arduino')}
+                    >
+                      Arduino (AVR)
+                    </button>
+                    <button
+                      className={targetDevice === 'esp32' ? 'btn-primary' : ''}
+                      onClick={() => setTargetDevice('esp32')}
+                    >
+                      ESP32 (Wi-Fi/Serial)
+                    </button>
+                  </div>
+
+                  <h4>Live Stream ({targetDevice === 'esp32' ? 'ESP32' : 'Arduino'})</h4>
                   <p className='muted' style={{ marginTop: -4 }}>
-                    This cube has its own onboard controller that does the
-                    actual LED driving — the Arduino just relays bytes to
-                    it (flash the <strong>Live Relay Sketch</strong>, Export
-                    tab). The controller falls back to its own built-in
-                    demo whenever the live feed stops, so streaming runs
-                    continuously until you stop it — it isn't a one-shot
-                    send.
+                    Relay bytes continuously to the cube controller in real time over {targetDevice === 'esp32' ? 'USB Serial or Wi-Fi WebSockets' : 'USB Serial'}.
                   </p>
-                  <div className='serial'>
-                    <button
-                      onClick={connectSerial}
-                      disabled={!!serialPort || connecting}
-                    >
-                      {connecting ? 'Connecting…' : 'Connect'}
-                    </button>
-                    <button
-                      onClick={disconnectSerial}
-                      disabled={!serialPort}
-                    >
-                      Disconnect
-                    </button>
-                    {!streaming ? (
+
+                  {targetDevice === 'esp32' && (
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
                       <button
-                        className='btn-primary'
-                        onClick={startStreaming}
+                        className={connectionMode === 'serial' ? 'btn-primary' : ''}
+                        onClick={() => setConnectionMode('serial')}
+                      >
+                        USB WebSerial
+                      </button>
+                      <button
+                        className={connectionMode === 'wifi' ? 'btn-primary' : ''}
+                        onClick={() => setConnectionMode('wifi')}
+                      >
+                        Wi-Fi WebSocket
+                      </button>
+                    </div>
+                  )}
+
+                  {connectionMode === 'serial' || targetDevice === 'arduino' ? (
+                    <div className='serial'>
+                      <button
+                        onClick={connectSerial}
+                        disabled={!!serialPort || connecting}
+                      >
+                        {connecting ? 'Connecting…' : 'Connect USB'}
+                      </button>
+                      <button
+                        onClick={disconnectSerial}
                         disabled={!serialPort}
                       >
-                        ▶ Start Streaming
+                        Disconnect
                       </button>
-                    ) : (
-                      <button className='btn-danger' onClick={stopStreaming}>
-                        ⏹ Stop Streaming
-                      </button>
-                    )}
-                  </div>
+                      {!streaming ? (
+                        <button
+                          className='btn-primary'
+                          onClick={startStreaming}
+                          disabled={!serialPort}
+                        >
+                          ▶ Start Streaming
+                        </button>
+                      ) : (
+                        <button className='btn-danger' onClick={stopStreaming}>
+                          ⏹ Stop Streaming
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className='serial' style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <input
+                        type='text'
+                        value={wifiIp}
+                        onChange={(e) => setWifiIp(e.target.value)}
+                        placeholder='192.168.4.1'
+                        style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-input)', color: 'var(--fg)' }}
+                      />
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          onClick={connectWiFi}
+                          disabled={!!webSocket || connecting}
+                        >
+                          {connecting ? 'Connecting…' : 'Connect Wi-Fi'}
+                        </button>
+                        <button
+                          onClick={disconnectWiFi}
+                          disabled={!webSocket}
+                        >
+                          Disconnect
+                        </button>
+                      </div>
+                      {!streaming ? (
+                        <button
+                          className='btn-primary'
+                          onClick={startStreaming}
+                          disabled={!webSocket}
+                        >
+                          ▶ Start Wi-Fi Stream
+                        </button>
+                      ) : (
+                        <button className='btn-danger' onClick={stopStreaming}>
+                          ⏹ Stop Streaming
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
               {activeTab === 'export' && (
                 <div>
-                  <h4>Export Options</h4>
+                  <h4>Target Device</h4>
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+                    <button
+                      className={targetDevice === 'arduino' ? 'btn-primary' : ''}
+                      onClick={() => setTargetDevice('arduino')}
+                    >
+                      Arduino (AVR)
+                    </button>
+                    <button
+                      className={targetDevice === 'esp32' ? 'btn-primary' : ''}
+                      onClick={() => setTargetDevice('esp32')}
+                    >
+                      ESP32 (Wi-Fi/Serial)
+                    </button>
+                  </div>
+
+                  <h4>Export Options ({targetDevice === 'esp32' ? 'ESP32' : 'Arduino'})</h4>
                   <button
                     onClick={() =>
                       copyToClipboard(framesToCArray(frames, 'ANIM'))
@@ -1548,25 +1696,60 @@ export default function App() {
                   >
                     Download .h
                   </button>
-                  <button
-                    onClick={() =>
-                      downloadFile(generateSketch('ANIM', frames), 'ANIM.ino')
-                    }
-                  >
-                    Download .ino
-                  </button>
-                  <button
-                    onClick={() =>
-                      downloadFile(
-                        generateStreamingReceiverSketch(),
-                        'live_relay.ino',
-                      )
-                    }
-                  >
-                    Live Relay Sketch
-                  </button>
 
-                  <h4>Share</h4>
+                  {targetDevice === 'arduino' ? (
+                    <>
+                      <button
+                        onClick={() =>
+                          downloadFile(generateSketch('ANIM', frames), 'ANIM.ino')
+                        }
+                      >
+                        Download Arduino .ino
+                      </button>
+                      <button
+                        onClick={() =>
+                          downloadFile(
+                            generateStreamingReceiverSketch(),
+                            'live_relay.ino',
+                          )
+                        }
+                      >
+                        Live Relay Sketch
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() =>
+                          downloadFile(generateESP32Sketch('ANIM', frames), 'ANIM_ESP32.ino')
+                        }
+                      >
+                        Download ESP32 .ino
+                      </button>
+                      <button
+                        onClick={() =>
+                          downloadFile(
+                            generateESP32LiveRelaySketch(),
+                            'esp32_live_relay.ino',
+                          )
+                        }
+                      >
+                        ESP32 USB Relay Sketch
+                      </button>
+                      <button
+                        onClick={() =>
+                          downloadFile(
+                            generateESP32WiFiRelaySketch(),
+                            'esp32_wifi_relay.ino',
+                          )
+                        }
+                      >
+                        ESP32 Wi-Fi Relay Sketch
+                      </button>
+                    </>
+                  )}
+
+                  <h4 style={{ marginTop: 16 }}>Share</h4>
                   <button onClick={exportVideo}>🎥 Export Video</button>
                   <p className='muted' style={{ marginTop: 4 }}>
                     Records one full loop of the 3D preview as a .webm

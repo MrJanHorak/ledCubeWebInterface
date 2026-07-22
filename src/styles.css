@@ -106,7 +106,70 @@ body {
   font-size: 20px;
   letter-spacing: 0.02em;
   margin: 0;
+}
+.header-status-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 12px;
   margin-right: auto;
+}
+.device-tag {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: rgba(255, 179, 71, 0.12);
+  color: var(--accent-amber);
+  border: 1px solid rgba(255, 179, 71, 0.3);
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.2s ease;
+}
+.device-tag:hover {
+  background: rgba(255, 179, 71, 0.25);
+  border-color: var(--accent-amber);
+}
+.conn-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border-hairline);
+  color: var(--text-muted);
+}
+.conn-tag.active {
+  color: var(--accent-cyan);
+  border-color: rgba(43, 212, 255, 0.4);
+}
+.conn-tag.streaming {
+  color: var(--accent-amber);
+  border-color: rgba(255, 179, 71, 0.5);
+  background: rgba(255, 179, 71, 0.1);
+}
+.conn-tag .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+.conn-tag.active .dot {
+  background: var(--accent-cyan);
+  box-shadow: 0 0 6px var(--accent-cyan);
+}
+.conn-tag.streaming .dot {
+  background: var(--accent-amber);
+  box-shadow: 0 0 8px var(--accent-amber);
+  animation: pulse-glow 1.2s infinite ease-in-out;
+}
+@keyframes pulse-glow {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.6; }
 }
 .help-toggle {
   background: transparent;
