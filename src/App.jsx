@@ -133,6 +133,7 @@ export default function App() {
   const [glyphInput, setGlyphInput] = useState('A');
   const [scrollSides, setScrollSides] = useState(1);
   const [glyphMode, setGlyphMode] = useState('flat');
+  const [fontFamily, setFontFamily] = useState('standard');
   const [transitionSteps, setTransitionSteps] = useState(6);
   const [transitionEasing, setTransitionEasing] = useState('linear');
   const [emoticon, setEmoticon] = useState('SMILE');
@@ -459,14 +460,24 @@ export default function App() {
   }
 
   function startTextScroll() {
-    const txtFrames = generateTextFrames(textInput, scrollSides, 'ltr');
+    const txtFrames = generateTextFrames(
+      textInput,
+      scrollSides,
+      'ltr',
+      fontFamily,
+    );
     if (!txtFrames || txtFrames.length === 0)
       return showToast('No text to scroll');
     appendOrReplaceFrames(txtFrames, 'Scroll Text');
   }
 
   function startGlyphSpin() {
-    const glyphFrames = generateGlyphFrames(glyphInput || 'A', 6, glyphMode);
+    const glyphFrames = generateGlyphFrames(
+      glyphInput || 'A',
+      6,
+      glyphMode,
+      fontFamily,
+    );
     appendOrReplaceFrames(glyphFrames, 'Spin Glyph');
   }
 
@@ -1203,6 +1214,22 @@ export default function App() {
               onToggle={() => toggleSection('text')}
             >
               <div className='form-row'>
+                <label>
+                  Font:
+                  <select
+                    value={fontFamily}
+                    onChange={(e) => setFontFamily(e.target.value)}
+                  >
+                    <option value='standard'>Standard</option>
+                    <option value='cursive'>Cursive</option>
+                  </select>
+                </label>
+                <span className='muted' style={{ fontSize: '0.85em' }}>
+                  Applies to Scroll Text and Spin Glyph in Flat mode (3D
+                  spin always uses its own font).
+                </span>
+              </div>
+              <div className='form-row'>
                 <input
                   type='text'
                   value={textInput}
@@ -1230,9 +1257,7 @@ export default function App() {
                 <input
                   type='text'
                   value={glyphInput}
-                  onChange={(e) =>
-                    setGlyphInput(e.target.value.slice(0, 1).toUpperCase())
-                  }
+                  onChange={(e) => setGlyphInput(e.target.value.slice(0, 1))}
                   placeholder='A'
                   style={{ width: 50 }}
                 />

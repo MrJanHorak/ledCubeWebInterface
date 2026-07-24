@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   framesToCArray,
   generateGlyphFrames,
+  generateTextFrames,
   renderImageToFace,
   generateImageFrames,
   generateESP32Sketch,
@@ -118,5 +119,60 @@ describe('renderImageToFace / generateImageFrames', () => {
     });
     // the shape should actually move as it spins -- not every frame identical
     expect(frames[0]).not.toEqual(frames[1]);
+  });
+});
+
+describe('lowercase and cursive font support', () => {
+  it('generateTextFrames renders lowercase text differently from its uppercase form (standard font)', () => {
+    const lower = generateTextFrames('hello', 1, 'ltr', 'standard');
+    const upper = generateTextFrames('HELLO', 1, 'ltr', 'standard');
+    expect(lower.length).toBeGreaterThan(0);
+    expect(upper.length).toBeGreaterThan(0);
+    // same length (same number of characters/columns) but different glyph
+    // shapes, since lowercase and uppercase 'h/e/l/l/o' differ in FONT5x7
+    expect(lower.length).toBe(upper.length);
+    expect(lower).not.toEqual(upper);
+  });
+
+  it('generateTextFrames accepts the cursive font and produces valid frames', () => {
+    const frames = generateTextFrames('Hello', 1, 'ltr', 'cursive');
+    expect(frames.length).toBeGreaterThan(0);
+    frames.forEach((frame) => {
+      expect(frame.length).toBe(64);
+      frame.forEach((b) => {
+        expect(b).toBeGreaterThanOrEqual(0);
+        expect(b).toBeLessThanOrEqual(0xff);
+      });
+    });
+  });
+
+  it('standard and cursive fonts render the same text differently', () => {
+    const standard = generateTextFrames('abc', 1, 'ltr', 'standard');
+    const cursive = generateTextFrames('abc', 1, 'ltr', 'cursive');
+    expect(standard.length).toBe(cursive.length);
+    expect(standard).not.toEqual(cursive);
+  });
+
+  it('an unsupported symbol in the smaller cursive punctuation set falls back to blank instead of throwing', () => {
+    expect(() => generateTextFrames('a#b', 1, 'ltr', 'cursive')).not.toThrow();
+  });
+
+  it('generateGlyphFrames (flat mode) renders lowercase and uppercase differently', () => {
+    const lower = generateGlyphFrames('a', 4, 'flat', 'standard');
+    const upper = generateGlyphFrames('A', 4, 'flat', 'standard');
+    expect(lower.length).toBe(upper.length);
+    expect(lower[0]).not.toEqual(upper[0]);
+  });
+
+  it('generateGlyphFrames (flat mode) supports the cursive font', () => {
+    const frames = generateGlyphFrames('a', 4, 'flat', 'cursive');
+    expect(frames.length).toBe(4);
+    expect(frames[0].some((b) => b !== 0)).toBe(true);
+  });
+
+  it('generateGlyphFrames (3D mode) still works when given a lowercase letter (falls back to uppercase)', () => {
+    const frames = generateGlyphFrames('a', 6, '3d', 'standard');
+    expect(frames.length).toBe(6);
+    expect(frames.some((f) => f.some((b) => b !== 0))).toBe(true);
   });
 });
