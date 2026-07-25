@@ -14,6 +14,7 @@ Designed for **Arduino (Uno/Nano)** and **ESP32** microcontrollers, featuring di
 ## ✨ Features
 
 - **Interactive 3D Voxel Editor**: Real-time 3D web preview powered by Three.js with orbit controls, layer-by-layer grid painting, onion skinning, and rectangle fill.
+- **Playback timing**: a global delay plus per-frame hold-time overrides, and quick FPS presets (10/15/24/30/60 fps) that just set the delay for you.
 - **Microcontroller Support**: Native export and live streaming for both **Arduino (AVR)** and **ESP32** (Xtensa / RISC-V).
 - **Dual Streaming Modes**:
   - **USB WebSerial**: Direct plug-and-play streaming from Google Chrome or Microsoft Edge.
@@ -67,6 +68,23 @@ The 8x8x8 LED Cube board features an onboard driver controller that handles matr
 
 ---
 
+### 0. Known Hardware
+
+The controller board built into this specific 8x8x8 cube is marked:
+
+```
+STC
+15F 2K60S2
+28I-PDIP40
+1930H0MS47.XD
+```
+
+That's an **STC15F2K60S2** — an 8051-core microcontroller from STC (a Chinese MCU vendor), commonly used as the onboard controller in commercial/DIY 8x8x8 LED cube kits. It's a real, separate chip doing the actual matrix multiplexing in its own firmware — **not** something this project's code runs on. This matters because it took a fair amount of debugging to establish: earlier versions of this project assumed the attached Arduino/ESP32 was driving the LEDs directly (bit-banging pins, needing a `displayFrame()` you'd fill in with your wiring) — that assumption was wrong for this hardware, and cost a lot of wasted effort chasing checksum/ACK protocol bugs that didn't need to exist. If you're adapting this project for a **different** cube that genuinely is pin-driven by the microcontroller (shift registers, direct multiplexing), you'll want different sketches than the relay ones described below — the "onboard controller" model here doesn't apply to that kind of build.
+
+---
+
+
+
 ### 1. Arduino (Uno / Nano / Mega) Setup
 
 #### Option A: Live USB WebSerial Streaming (Recommended for testing)
@@ -89,14 +107,15 @@ The 8x8x8 LED Cube board features an onboard driver controller that handles matr
 ESP32 microcontrollers offer 32-bit speed, ample flash memory, and built-in Wi-Fi!
 
 #### Option A: Wireless Wi-Fi WebSockets Streaming (No USB cable needed!)
-1. In the **Export** tab, select **ESP32 (Wi-Fi/Serial)** and click **Download ESP32 Wi-Fi Relay Sketch** (`esp32_wifi_relay.ino`).
-2. Install the **WebSockets** library by Markus Sattler in the Arduino IDE (*Sketch → Include Library → Manage Libraries → search `WebSockets`*).
-3. Flash `esp32_wifi_relay.ino` to your ESP32.
-4. Power up your ESP32. It will create a Wi-Fi Access Point:
-   - **SSID**: `LED_Cube_AP`
-   - **Password**: `ledcube123`
-5. Connect your PC / laptop / smartphone Wi-Fi to `LED_Cube_AP`.
-6. Open [https://3d-led-cube-programmer.netlify.app/](https://3d-led-cube-programmer.netlify.app/), go to the **Serial** tab, select **Wi-Fi WebSocket** mode, enter `192.168.4.1`, click **Connect Wi-Fi**, and click **▶ Start Wi-Fi Stream**!
+1. In the **Export** tab, select **ESP32 (Wi-Fi/Serial)**.
+2. Choose **Host its own network (Access Point)** or **Join my home Wi-Fi (Station)**, and fill in the name/password fields — for Access Point mode these become the network it creates; for Station mode, these are your existing Wi-Fi's credentials.
+3. Click **Download ESP32 Wi-Fi Relay Sketch** (`esp32_wifi_relay.ino`).
+4. Install the **WebSockets** library by Markus Sattler in the Arduino IDE (*Sketch → Include Library → Manage Libraries → search `WebSockets`*).
+5. Flash `esp32_wifi_relay.ino` to your ESP32.
+6. Power up your ESP32:
+   - **Access Point mode**: it creates its own network (default SSID `LED_Cube_AP` / password `ledcube123`, or whatever you set). Connect your PC/phone to that network, then use `192.168.4.1` in the app.
+   - **Station mode**: it joins your existing Wi-Fi and prints the IP address it was assigned to the Arduino IDE's Serial Monitor — use that IP in the app instead.
+7. Open the app, go to the **Serial** tab, select **Wi-Fi WebSocket** mode, enter the IP address, click **Connect Wi-Fi**, and click **▶ Start Wi-Fi Stream**!
 
 #### Option B: USB WebSerial Streaming on ESP32
 1. Flash **ESP32 USB Relay Sketch** (`esp32_live_relay.ino`) to your ESP32.
@@ -105,6 +124,13 @@ ESP32 microcontrollers offer 32-bit speed, ample flash memory, and built-in Wi-F
 #### Option C: Standalone ESP32 Animation (`ANIM_ESP32.ino`)
 1. Click **Download ESP32 .ino** (`ANIM_ESP32.ino`).
 2. Flash to your ESP32 to store animations in flash memory (`PROGMEM` via `<pgmspace.h>`).
+
+#### Option D: Self-Hosted Web App (no separate site needed)
+The ESP32 can serve this entire website from its own flash storage, so anyone on the network can point a browser at the ESP32's address and get the full designer UI — no internet connection, no hosting this site anywhere else.
+
+1. In the **Export** tab, set up the same Access Point/Station and name/password fields as Option A, then click **Download ESP32 Self-Hosted Web App Sketch** (`esp32_webapp_relay.ino`).
+2. Follow the setup steps in that file's header comment: install `ESPAsyncWebServer` and its `AsyncTCP` dependency, build this site (`npm run build`), copy the contents of the resulting `dist/` folder into a `data/` folder next to the sketch, and use the Arduino IDE's "ESP32 Sketch Data Upload" tool to flash that folder to the board's filesystem separately from the sketch itself.
+3. **This one is a starting point, not a guaranteed-working final sketch** — it wasn't possible to test it against real hardware while building it. The two things most likely to need adjusting for your exact setup: the ESPAsyncWebServer library's exact API (there have been a couple of maintained forks over time), and your board's partition scheme — many boards' *default* scheme only allocates a small filesystem partition meant for simple config files, not a several-hundred-KB web app; you'll likely need to pick a partition scheme with a larger SPIFFS/LittleFS allocation, and gzip-compressing the `dist/` files before uploading is worth doing both to fit more comfortably and transfer faster.
 
 ---
 
@@ -134,6 +160,12 @@ The LED cube driver protocol operates at **38,400 baud, 8N1**:
 
 ---
 
-## 📄 License
+## 🧊 Considered, Not Built: Configurable Cube Size
+
+This app is hard-coded for an 8x8x8 cube — the frame format itself (64 bytes, one byte per column, one bit per height layer) assumes it, and that assumption runs through nearly every file: the grid editor, the 3D preview, every procedural pattern generator, every font glyph, the exporters, and the serial protocol's fixed 64-byte frame size. Making the size configurable (say, 4x4x4 or 16x16x16) isn't a UI-layer feature — it's a data-format change that cascades everywhere, including how a "byte per column" stops working once a cube is taller than 8 layers (you'd need multiple bytes per column instead of one). That's a legitimate direction if you build a different-sized cube someday, but it's disproportionately large scope to fold in alongside smaller feature work — worth treating as its own dedicated project with its own planning, rather than a checkbox item.
+
+---
+
+
 
 Distributed under the MIT License. Feel free to adapt and improve!

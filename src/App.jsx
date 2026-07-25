@@ -22,6 +22,7 @@ import {
   generateESP32Sketch,
   generateESP32LiveRelaySketch,
   generateESP32WiFiRelaySketch,
+  generateESP32WebAppSketch,
 } from './utils/exporter';
 import {
   mirrorX,
@@ -125,6 +126,9 @@ export default function App() {
   const [targetDevice, setTargetDevice] = useState('arduino'); // 'arduino' | 'esp32'
   const [connectionMode, setConnectionMode] = useState('serial'); // 'serial' | 'wifi'
   const [wifiIp, setWifiIp] = useState('192.168.4.1');
+  const [esp32WifiMode, setEsp32WifiMode] = useState('ap'); // 'ap' | 'sta'
+  const [esp32Ssid, setEsp32Ssid] = useState('LED_Cube_AP');
+  const [esp32Password, setEsp32Password] = useState('ledcube123');
   const [webSocket, setWebSocket] = useState(null);
   const [connecting, setConnecting] = useState(false);
   const [streaming, setStreaming] = useState(false);
@@ -1149,6 +1153,24 @@ export default function App() {
                   style={{ width: 60 }}
                 />
               </label>
+              <label title='Quick presets that set the Delay above to a given frames-per-second'>
+                FPS:
+                <select
+                  value=''
+                  onChange={(e) => {
+                    const fps = Number(e.target.value);
+                    if (fps) setDelayMs(Math.round(1000 / fps));
+                    e.target.value = '';
+                  }}
+                >
+                  <option value=''>Preset…</option>
+                  <option value='10'>10 fps</option>
+                  <option value='15'>15 fps</option>
+                  <option value='24'>24 fps</option>
+                  <option value='30'>30 fps</option>
+                  <option value='60'>60 fps</option>
+                </select>
+              </label>
               <label title="Override just this frame's hold time (blank = use the Delay above)">
                 Frame hold (ms):
                 <input
@@ -1814,16 +1836,88 @@ export default function App() {
                       >
                         ESP32 USB Relay Sketch
                       </button>
+
+                      <div className='form-row' style={{ marginTop: 8 }}>
+                        <label>
+                          <input
+                            type='radio'
+                            name='esp32WifiMode'
+                            checked={esp32WifiMode === 'ap'}
+                            onChange={() => setEsp32WifiMode('ap')}
+                          />{' '}
+                          Host its own network (Access Point)
+                        </label>
+                        <label>
+                          <input
+                            type='radio'
+                            name='esp32WifiMode'
+                            checked={esp32WifiMode === 'sta'}
+                            onChange={() => setEsp32WifiMode('sta')}
+                          />{' '}
+                          Join my home Wi-Fi (Station)
+                        </label>
+                      </div>
+                      <div className='form-row'>
+                        <label>
+                          {esp32WifiMode === 'sta'
+                            ? 'Your Wi-Fi network name'
+                            : 'Access Point name'}
+                          :
+                          <input
+                            type='text'
+                            value={esp32Ssid}
+                            onChange={(e) => setEsp32Ssid(e.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Password:
+                          <input
+                            type='text'
+                            value={esp32Password}
+                            onChange={(e) => setEsp32Password(e.target.value)}
+                          />
+                        </label>
+                      </div>
+                      <p className='muted' style={{ marginTop: -4 }}>
+                        {esp32WifiMode === 'sta'
+                          ? 'The ESP32 joins your existing Wi-Fi and prints the IP address it was assigned over Serial — check the Arduino IDE Serial Monitor after flashing and use that IP in the Wi-Fi IP field to the left.'
+                          : 'The ESP32 creates its own network with this name/password. Connect your phone/computer to it, then use 192.168.4.1 in the Wi-Fi IP field to the left.'}
+                      </p>
                       <button
                         onClick={() =>
                           downloadFile(
-                            generateESP32WiFiRelaySketch(),
+                            generateESP32WiFiRelaySketch({
+                              mode: esp32WifiMode,
+                              ssid: esp32Ssid,
+                              password: esp32Password,
+                            }),
                             'esp32_wifi_relay.ino',
                           )
                         }
                       >
                         ESP32 Wi-Fi Relay Sketch
                       </button>
+                      <button
+                        onClick={() =>
+                          downloadFile(
+                            generateESP32WebAppSketch({
+                              mode: esp32WifiMode,
+                              ssid: esp32Ssid,
+                              password: esp32Password,
+                            }),
+                            'esp32_webapp_relay.ino',
+                          )
+                        }
+                      >
+                        ESP32 Self-Hosted Web App Sketch
+                      </button>
+                      <p className='muted' style={{ marginTop: 4 }}>
+                        This last one serves the whole website from the
+                        ESP32 itself — no separate site to visit. It needs
+                        the built <code>dist/</code> files uploaded to the
+                        board's filesystem too; setup steps are in the
+                        sketch's header comment.
+                      </p>
                     </>
                   )}
 

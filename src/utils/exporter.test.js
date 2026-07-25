@@ -8,6 +8,7 @@ import {
   generateESP32Sketch,
   generateESP32LiveRelaySketch,
   generateESP32WiFiRelaySketch,
+  generateESP32WebAppSketch,
 } from './exporter';
 
 const sampleFrame = new Array(64).fill(0).map((_, i) => i % 256);
@@ -43,11 +44,27 @@ describe('ESP32 sketch generators', () => {
     expect(out).toContain('Serial.begin(38400);');
   });
 
-  it('generates valid ESP32 Wi-Fi relay sketch', () => {
+  it('generates valid ESP32 Wi-Fi relay sketch (AP mode by default)', () => {
     const out = generateESP32WiFiRelaySketch();
     expect(out).toContain('#include <WiFi.h>');
     expect(out).toContain('#include <WebSocketsServer.h>');
     expect(out).toContain('WebSocketsServer webSocket = WebSocketsServer(81);');
+    expect(out).toContain('WiFi.softAP(ssid, password);');
+    expect(out).not.toContain('WiFi.mode(WIFI_STA)');
+  });
+
+  it('generates a Wi-Fi relay sketch that joins an existing network in STA mode', () => {
+    const out = generateESP32WiFiRelaySketch({
+      mode: 'sta',
+      ssid: 'MyHomeNetwork',
+      password: 'hunter2',
+    });
+    expect(out).toContain('WiFi.mode(WIFI_STA)');
+    expect(out).toContain('WiFi.begin(ssid, password)');
+    expect(out).toContain('const char* ssid = "MyHomeNetwork";');
+    expect(out).toContain('const char* password = "hunter2";');
+    expect(out).toContain('Serial.println(WiFi.localIP());');
+    expect(out).not.toContain('WiFi.softAP');
   });
 });
 
@@ -174,5 +191,28 @@ describe('lowercase and cursive font support', () => {
     const frames = generateGlyphFrames('a', 6, '3d', 'standard');
     expect(frames.length).toBe(6);
     expect(frames.some((f) => f.some((b) => b !== 0))).toBe(true);
+  });
+});
+
+describe('generateESP32WebAppSketch', () => {
+  it('serves the built site from LittleFS and runs the WebSocket relay', () => {
+    const out = generateESP32WebAppSketch();
+    expect(out).toContain('#include <LittleFS.h>');
+    expect(out).toContain('#include <ESPAsyncWebServer.h>');
+    expect(out).toContain('LittleFS.begin(true)');
+    expect(out).toContain('server.serveStatic("/", LittleFS, "/")');
+    expect(out).toContain('WebSocketsServer webSocket(81);');
+    expect(out).toContain('WiFi.softAP(ssid, password);');
+  });
+
+  it('supports STA mode and prints the assigned IP', () => {
+    const out = generateESP32WebAppSketch({
+      mode: 'sta',
+      ssid: 'MyHomeNetwork',
+      password: 'hunter2',
+    });
+    expect(out).toContain('WiFi.mode(WIFI_STA)');
+    expect(out).toContain('const char* ssid = "MyHomeNetwork";');
+    expect(out).not.toContain('WiFi.softAP');
   });
 });

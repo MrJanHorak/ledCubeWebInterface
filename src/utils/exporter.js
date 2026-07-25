@@ -162,10 +162,139 @@ void loop() {
 `;
 }
 
-export function generateESP32WiFiRelaySketch() {
+export function generateESP32WebAppSketch({
+  mode = 'ap',
+  ssid = 'LED_Cube_AP',
+  password = 'ledcube123',
+} = {}) {
+  const isSta = mode === 'sta';
+  const wifiSetup = isSta
+    ? `  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(300);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.print("Connected! Open this in a browser: http://");
+  Serial.println(WiFi.localIP());`
+    : `  WiFi.softAP(ssid, password);
+  Serial.print("Access Point \\"");
+  Serial.print(ssid);
+  Serial.println("\\" started. Connect to it, then open http://192.168.4.1 in a browser.");`;
+
+  return `// ESP32 Self-Hosted Web App + Wi-Fi Relay Sketch for LED Cube
+//
+// Serves this website's own built files directly from the ESP32's flash
+// filesystem (LittleFS), so anyone on the network can open a browser,
+// navigate to the ESP32's address, and use the full designer UI with no
+// internet connection and no separate site to host anywhere else. Also
+// runs the same WebSocket relay as the Wi-Fi Relay sketch (port 81), so
+// the page it serves can stream frames to the cube the same way.
+//
+// I can't test this against real hardware from where this was generated --
+// treat it as a solid starting point, not a guaranteed-working final
+// sketch. The parts most likely to need small adjustments for your exact
+// installed library versions are the ESPAsyncWebServer include/API and the
+// partition scheme (see step 6).
+//
+// SETUP (one-time):
+// 1. Arduino Library Manager: install "ESPAsyncWebServer" (and its
+//    "AsyncTCP" dependency) and "WebSockets" by Markus Sattler.
+// 2. Build this website for production (npm run build) -- that produces
+//    a dist/ folder.
+// 3. Put the CONTENTS of dist/ (not the dist folder itself) into a
+//    folder named exactly "data", placed next to this .ino file.
+// 4. Install the "ESP32 Sketch Data Upload" tool for the Arduino IDE if
+//    you don't have it, then use Tools -> ESP32 Sketch Data Upload to
+//    flash the contents of data/ to LittleFS.
+// 5. Flash this sketch normally (a separate step from #4).
+// 6. Tools -> Partition Scheme: pick one with a large enough SPIFFS/
+//    LittleFS partition for this app's build output (currently several
+//    hundred KB) -- many boards' *default* scheme only allocates a small
+//    partition meant for simple config files, not a whole web app. Gzip-
+//    compressing the dist/ files before uploading is worth doing too,
+//    both to fit more comfortably and to transfer faster to browsers.
+// 7. ${isSta ? 'Check the Serial Monitor after flashing for the IP address it was assigned, then open that address in a browser.' : "Connect a phone/computer to the Wi-Fi network it creates, then open 192.168.4.1 in a browser."}
+
+#include <WiFi.h>
+#include <WebSocketsServer.h>
+#include <ESPAsyncWebServer.h>
+#include <LittleFS.h>
+
+const char* ssid = "${ssid}";
+const char* password = "${password}";
+
+AsyncWebServer server(80);
+WebSocketsServer webSocket(81);
+
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
+  if (type == WStype_BIN) {
+    for (size_t i = 0; i < length; i++) {
+      Serial.write(payload[i]);
+    }
+  } else if (type == WStype_TEXT) {
+    if (length >= 4 && payload[0] == 'P' && payload[1] == 'I' && payload[2] == 'N' && payload[3] == 'G') {
+      webSocket.sendTXT(num, "PONG");
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(38400);
+
+  if (!LittleFS.begin(true)) {
+    Serial.println("LittleFS mount failed -- did you upload the data/ folder? See setup notes above.");
+    return;
+  }
+
+${wifiSetup}
+
+  // Serve the built website straight from LittleFS
+  server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
+  server.begin();
+
+  // Same WebSocket relay as the Wi-Fi Relay sketch, so the page above can
+  // stream frames to the cube controller over Serial
+  webSocket.begin();
+  webSocket.onEvent(webSocketEvent);
+}
+
+void loop() {
+  webSocket.loop();
+}
+`;
+}
+
+export function generateESP32WiFiRelaySketch({
+  mode = 'ap',
+  ssid = 'LED_Cube_AP',
+  password = 'ledcube123',
+} = {}) {
+  const isSta = mode === 'sta';
+  const wifiSetup = isSta
+    ? `  // Connect to your existing Wi-Fi network (STA mode)
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(300);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.print("Connected! IP address: ");
+  Serial.println(WiFi.localIP());
+  Serial.println("Use this IP address in the website's Wi-Fi IP field.");`
+    : `  // Create our own Access Point (no existing Wi-Fi network needed)
+  WiFi.softAP(ssid, password);
+  Serial.print("Access Point started. Connect to Wi-Fi network \\"");
+  Serial.print(ssid);
+  Serial.println("\\" and use 192.168.4.1 in the website's Wi-Fi IP field.");`;
+
   return `// ESP32 Wireless Wi-Fi WebSockets Relay Sketch for LED Cube
 //
-// Connects ESP32 to Wi-Fi (or creates an Access Point) and starts a WebSocket server.
+// ${isSta ? 'Joins your existing Wi-Fi network (STA mode)' : 'Creates its own Wi-Fi Access Point'} and starts a WebSocket server.
 // Web app streams LED cube frames wirelessly over WebSockets, which ESP32 forwards
 // to the LED Cube controller over Serial.
 //
@@ -174,8 +303,8 @@ export function generateESP32WiFiRelaySketch() {
 #include <WiFi.h>
 #include <WebSocketsServer.h>
 
-const char* ssid = "LED_Cube_AP";
-const char* password = "ledcube123";
+const char* ssid = "${ssid}";
+const char* password = "${password}";
 
 WebSocketsServer webSocket = WebSocketsServer(81);
 
@@ -186,7 +315,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
       Serial.write(payload[i]);
     }
   } else if (type == WStype_TEXT) {
-    if (payload[0] == 'P' && payload[1] == 'I' && payload[2] == 'N' && payload[3] == 'G') {
+    if (length >= 4 && payload[0] == 'P' && payload[1] == 'I' && payload[2] == 'N' && payload[3] == 'G') {
       webSocket.sendTXT(num, "PONG");
     }
   }
@@ -195,8 +324,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 void setup() {
   Serial.begin(38400);
 
-  // Start Access Point
-  WiFi.softAP(ssid, password);
+${wifiSetup}
 
   // Start WebSocket server on port 81
   webSocket.begin();
@@ -424,151 +552,11 @@ const CUBE8x8_FONT = {
 
 // Stylized Cursive/Script Font for continuous flowing text
 // Lowercase letters feature trailing connection pixels to link words together
-// const CURSIVE_FONT = {
-//   ' ': [0x00, 0x00, 0x00, 0x00, 0x00],
-
-//   // Script Uppercase
-//   A: [0x78, 0x16, 0x11, 0x16, 0x78],
-//   B: [0x7f, 0x49, 0x49, 0x49, 0x36],
-//   C: [0x3e, 0x41, 0x41, 0x41, 0x22],
-//   D: [0x7f, 0x41, 0x41, 0x22, 0x1c],
-//   E: [0x7f, 0x49, 0x49, 0x49, 0x41],
-//   F: [0x7f, 0x09, 0x09, 0x09, 0x01],
-//   G: [0x3e, 0x41, 0x49, 0x49, 0x7a],
-//   H: [0x7f, 0x08, 0x08, 0x08, 0x7f],
-//   I: [0x00, 0x41, 0x7f, 0x41, 0x00],
-//   J: [0x20, 0x40, 0x41, 0x3f, 0x01],
-//   K: [0x7f, 0x08, 0x14, 0x22, 0x41],
-//   L: [0x7f, 0x40, 0x40, 0x40, 0x40],
-//   M: [0x7f, 0x02, 0x04, 0x02, 0x7f],
-//   N: [0x7f, 0x04, 0x08, 0x10, 0x7f],
-//   O: [0x3e, 0x41, 0x41, 0x41, 0x3e],
-//   P: [0x7f, 0x09, 0x09, 0x09, 0x06],
-//   Q: [0x3e, 0x41, 0x51, 0x21, 0x5e],
-//   R: [0x7f, 0x09, 0x19, 0x29, 0x46],
-//   S: [0x46, 0x49, 0x49, 0x49, 0x31],
-//   T: [0x01, 0x01, 0x7f, 0x01, 0x01],
-//   U: [0x3f, 0x40, 0x40, 0x40, 0x3f],
-//   V: [0x1f, 0x20, 0x40, 0x20, 0x1f],
-//   W: [0x7f, 0x20, 0x18, 0x20, 0x7f],
-//   X: [0x63, 0x14, 0x08, 0x14, 0x63],
-//   Y: [0x03, 0x04, 0x78, 0x04, 0x03],
-//   Z: [0x61, 0x51, 0x49, 0x45, 0x43],
-
-//   // Linked Script Lowercase
-//   a: [0x20, 0x54, 0x54, 0x78, 0x40],
-//   b: [0x7f, 0x48, 0x48, 0x30, 0x40],
-//   c: [0x38, 0x44, 0x44, 0x48, 0x40],
-//   d: [0x38, 0x44, 0x44, 0x7f, 0x40],
-//   e: [0x38, 0x54, 0x54, 0x58, 0x40],
-//   f: [0x08, 0x7e, 0x09, 0x01, 0x00],
-//   g: [0x18, 0xa4, 0xa4, 0x7c, 0x80],
-//   h: [0x7f, 0x08, 0x04, 0x78, 0x40],
-//   i: [0x00, 0x44, 0x7d, 0x40, 0x40],
-//   j: [0x20, 0x40, 0x44, 0x3d, 0x80],
-//   k: [0x7f, 0x10, 0x28, 0x44, 0x40],
-//   l: [0x00, 0x41, 0x7f, 0x40, 0x40],
-//   m: [0x7c, 0x04, 0x78, 0x04, 0x78],
-//   n: [0x7c, 0x08, 0x04, 0x78, 0x40],
-//   o: [0x38, 0x44, 0x44, 0x38, 0x40],
-//   p: [0xfc, 0x24, 0x24, 0x18, 0x00],
-//   q: [0x18, 0x24, 0x24, 0xfc, 0x80],
-//   r: [0x7c, 0x08, 0x04, 0x0c, 0x40],
-//   s: [0x48, 0x54, 0x54, 0x28, 0x40],
-//   t: [0x04, 0x3f, 0x44, 0x40, 0x40],
-//   u: [0x3c, 0x40, 0x40, 0x7c, 0x40],
-//   v: [0x1c, 0x20, 0x40, 0x20, 0x40],
-//   w: [0x3c, 0x40, 0x3c, 0x40, 0x3c],
-//   x: [0x44, 0x28, 0x10, 0x28, 0x44],
-//   y: [0x1c, 0xa0, 0xa0, 0x7c, 0x80],
-//   z: [0x44, 0x64, 0x54, 0x4c, 0x40],
-
-//   // Shared Punctuation
-//   '!': [0x00, 0x00, 0x5f, 0x00, 0x00],
-//   '?': [0x20, 0x40, 0x4d, 0x50, 0x20],
-//   '.': [0x00, 0x60, 0x60, 0x00, 0x00],
-//   ',': [0x00, 0x80, 0x60, 0x00, 0x00],
-// };
-
-// True Calligraphic / Script Font for 8x8x8 LED Cube
-// Optimized with italic slants, rounded open bowls, and upward tail hooks
-// Designed to look like natural handwriting even with 1-pixel column spacing
-// const CURSIVE_FONT = {
-//   ' ': [0x00, 0x00, 0x00, 0x00, 0x00],
-
-//   // Calligraphic Uppercase (Script Swashes & Slants)
-//   A: [0x70, 0x18, 0x14, 0x18, 0x70], // Slanted arch with crossbar
-//   B: [0x7e, 0x49, 0x49, 0x49, 0x36], // Curved script loops
-//   C: [0x3c, 0x42, 0x42, 0x42, 0x24], // Open rounded bowl
-//   D: [0x7e, 0x41, 0x41, 0x22, 0x1c], // Soft rounded script D
-//   E: [0x7e, 0x49, 0x49, 0x4a, 0x44], // Flowing script E with tail
-//   F: [0x7e, 0x09, 0x09, 0x0a, 0x04], // Script F with curved top
-//   G: [0x3c, 0x42, 0x4a, 0x4a, 0x3c], // Script G with curled tail
-//   H: [0x7e, 0x08, 0x08, 0x08, 0x76], // Slanted H with exit hook
-//   I: [0x00, 0x42, 0x7e, 0x42, 0x00], // Serifed script stem
-//   J: [0x20, 0x40, 0x42, 0x3e, 0x02], // Deep script loop J
-//   K: [0x7e, 0x08, 0x14, 0x22, 0x42], // Slanted K with trailing tail
-//   L: [0x7e, 0x40, 0x40, 0x42, 0x44], // Script L with base swash
-//   M: [0x7e, 0x04, 0x18, 0x04, 0x76], // Slanted arches with tail
-//   N: [0x7e, 0x04, 0x08, 0x10, 0x76], // Flowing diagonal with tail
-//   O: [0x3c, 0x42, 0x42, 0x42, 0x3c], // Perfect oval bowl
-//   P: [0x7e, 0x11, 0x11, 0x11, 0x0e], // High script loop P
-//   Q: [0x3c, 0x42, 0x52, 0x22, 0x5c], // Script Q with bottom swash
-//   R: [0x7e, 0x11, 0x21, 0x41, 0x3e], // Flowing R with curved leg
-//   S: [0x44, 0x4a, 0x4a, 0x4a, 0x30], // Smooth cursive S-curve
-//   T: [0x02, 0x01, 0x7e, 0x01, 0x02], // Curved top script crossbar
-//   U: [0x3e, 0x40, 0x40, 0x20, 0x7e], // Deep U with trailing stem
-//   V: [0x1e, 0x20, 0x40, 0x20, 0x1e], // Slanted V
-//   W: [0x3e, 0x40, 0x3c, 0x40, 0x3e], // Double script loop W
-//   X: [0x62, 0x14, 0x08, 0x14, 0x62], // Calligraphic cross X
-//   Y: [0x0e, 0x10, 0x60, 0x10, 0x0e], // Slanted Y bowl
-//   Z: [0x62, 0x52, 0x4a, 0x46, 0x42], // Diagonal script Z
-
-//   // Flowing Lowercase (Self-Contained Swoops & Hooks)
-//   a: [0x20, 0x54, 0x54, 0x34, 0x78], // Teardrop bowl with vertical tail
-//   b: [0x7f, 0x28, 0x44, 0x44, 0x38], // Tall stem with rounded loop
-//   c: [0x38, 0x44, 0x44, 0x44, 0x28], // Slanted C with open lip
-//   d: [0x38, 0x44, 0x44, 0x28, 0x7f], // Round bowl into tall stem
-//   e: [0x38, 0x54, 0x54, 0x54, 0x18], // Angled script eye
-//   f: [0x08, 0x7e, 0x09, 0x02, 0x00], // Slanted crossbar with hook
-//   g: [0x18, 0xa4, 0xa4, 0xa4, 0x7c], // Teardrop bowl into bottom descender
-//   h: [0x7f, 0x08, 0x04, 0x04, 0x78], // Tall stem into curved arch tail
-//   i: [0x00, 0x44, 0x7a, 0x40, 0x00], // Dotted script stem with hook
-//   j: [0x20, 0x40, 0x40, 0x3a, 0x00], // Dotted descender loop
-//   k: [0x7f, 0x10, 0x28, 0x44, 0x00], // Tall stem with script ribbon
-//   l: [0x00, 0x42, 0x7e, 0x40, 0x00], // Tall slanted stem with base swoop
-//   m: [0x7c, 0x04, 0x78, 0x04, 0x78], // Double rounded arches with tail
-//   n: [0x7c, 0x08, 0x04, 0x04, 0x78], // Single arch with exit tail
-//   o: [0x38, 0x44, 0x44, 0x44, 0x38], // Slanted script oval
-//   p: [0xfc, 0x24, 0x24, 0x24, 0x18], // Descender stem with closed bowl
-//   q: [0x18, 0x24, 0x24, 0x18, 0xfc], // Closed bowl into descender stem
-//   r: [0x7c, 0x08, 0x04, 0x0c, 0x08], // Script stem with top shoulder hook
-//   s: [0x48, 0x54, 0x54, 0x54, 0x20], // Curved script s-curve
-//   t: [0x04, 0x3f, 0x44, 0x40, 0x20], // Short stem with crossbar and hook
-//   u: [0x3c, 0x40, 0x40, 0x20, 0x7c], // Flowing cup into stem
-//   v: [0x1c, 0x20, 0x40, 0x20, 0x1c], // Soft slanted V
-//   w: [0x3c, 0x40, 0x3c, 0x40, 0x3c], // Double flowing cup
-//   x: [0x44, 0x28, 0x10, 0x28, 0x44], // Cursive crossed diagonal
-//   y: [0x1c, 0xa0, 0xa0, 0xa0, 0x7c], // Flowing cup into bottom descender
-//   z: [0x44, 0x64, 0x54, 0x4c, 0x44], // Script diagonal Z
-
-//   // Punctuation
-//   '!': [0x00, 0x00, 0x5f, 0x00, 0x00],
-//   '?': [0x20, 0x40, 0x4d, 0x50, 0x20],
-//   '.': [0x00, 0x60, 0x60, 0x00, 0x00],
-//   ',': [0x00, 0x80, 0x60, 0x00, 0x00]
-// };
-
-// True Connected Dot-Matrix Script Font
-// Lowercase letters terminate on the baseline (0x40) to seamlessly link into the next letter
-// Authentic Fami-Style 8x8 Pixel Script Font
-// Engineered with Uniform Baseline Chaining: every lowercase letter enters at 0x20
-// and exits at 0x20/0x30 so words form an unbroken cursive ribbon across the cube!
-export const CURSIVE_FONT = {
+const CURSIVE_FONT = {
   ' ': [0x00, 0x00, 0x00, 0x00, 0x00],
 
-  // Retro Script Uppercase (Slanted Stems & Classic RPG Swashes)
-  A: [0x70, 0x18, 0x14, 0x18, 0x70],
+  // Script Uppercase
+  A: [0x78, 0x16, 0x11, 0x16, 0x78],
   B: [0x7f, 0x49, 0x49, 0x49, 0x36],
   C: [0x3e, 0x41, 0x41, 0x41, 0x22],
   D: [0x7f, 0x41, 0x41, 0x22, 0x1c],
@@ -595,41 +583,40 @@ export const CURSIVE_FONT = {
   Y: [0x03, 0x04, 0x78, 0x04, 0x03],
   Z: [0x61, 0x51, 0x49, 0x45, 0x43],
 
-  // Chained Cursive Lowercase (Col 0 = 0x20 Entry -> Col 4 = 0x20/0x30 Exit)
-  a: [0x20, 0x58, 0x48, 0x78, 0x20], // Smooth teardrop bowl into stem & exit tail
-  b: [0x20, 0x7f, 0x48, 0x48, 0x30], // Lead-in to tall ascender stem & rounded loop
-  c: [0x20, 0x50, 0x48, 0x48, 0x20], // Slanted C loop chaining to baseline
-  d: [0x20, 0x58, 0x48, 0x7f, 0x20], // Bowl leading into tall right ascender stem
-  e: [0x20, 0x30, 0x58, 0x58, 0x30], // Angled retro script eye with exit loop
-  f: [0x20, 0x7e, 0x89, 0x89, 0x20], // Tall ascender + deep descender loop (rows 1-7)
-  g: [0x20, 0x58, 0x88, 0xf8, 0x20], // Bowl dropping into row 7 descender loop
-  h: [0x20, 0x7f, 0x08, 0x48, 0x30], // Tall stem into shoulder arch & upward tail
-  i: [0x20, 0x40, 0x79, 0x40, 0x20], // Dotted stem (bit 0) with graceful swoop
-  j: [0x20, 0xc0, 0xf9, 0x40, 0x20], // Dotted descender loop hooking on row 7
-  k: [0x20, 0x7f, 0x10, 0x28, 0x30], // Tall stem with script ribbon loop
-  l: [0x20, 0x40, 0x7f, 0x40, 0x20], // Graceful tall stem with base curve
-  m: [0x20, 0x78, 0x08, 0x78, 0x30], // Double flowing retro script arch
-  n: [0x20, 0x78, 0x08, 0x48, 0x30], // Single flowing arch with upward exit
-  o: [0x20, 0x58, 0x48, 0x58, 0x20], // Forward-slanting oval chained at row 5
-  p: [0x20, 0xf8, 0x48, 0x48, 0x30], // Descender stem (rows 3-7) with closed bowl
-  q: [0x20, 0x58, 0x48, 0xf8, 0x20], // Bowl chained into right descender stem
-  r: [0x20, 0x78, 0x08, 0x18, 0x20], // Short stem with top right shoulder hook
-  s: [0x20, 0x50, 0x58, 0x28, 0x20], // Classic 8-bit cursive s-curve
-  t: [0x20, 0x10, 0x7e, 0x50, 0x20], // Stem with row-4 crossbar & exit tail
-  u: [0x20, 0x78, 0x40, 0x68, 0x30], // Flowing cup leading into right stem
-  v: [0x20, 0x38, 0x40, 0x18, 0x20], // Slanted V bottoming out on row 6
-  w: [0x20, 0x58, 0x68, 0x58, 0x20], // Double flowing cup
-  x: [0x20, 0x48, 0x10, 0x28, 0x20], // Crossed diagonal with baseline entry/exit
-  y: [0x20, 0x78, 0xc0, 0xf8, 0x20], // Cup dropping into row 6/7 descender loop
-  z: [0x20, 0x48, 0x58, 0x68, 0x20], // Classic Z-diagonal with tail
+  // Linked Script Lowercase
+  a: [0x20, 0x54, 0x54, 0x78, 0x40],
+  b: [0x7f, 0x48, 0x48, 0x30, 0x40],
+  c: [0x38, 0x44, 0x44, 0x48, 0x40],
+  d: [0x38, 0x44, 0x44, 0x7f, 0x40],
+  e: [0x38, 0x54, 0x54, 0x58, 0x40],
+  f: [0x08, 0x7e, 0x09, 0x01, 0x00],
+  g: [0x18, 0xa4, 0xa4, 0x7c, 0x80],
+  h: [0x7f, 0x08, 0x04, 0x78, 0x40],
+  i: [0x00, 0x44, 0x7d, 0x40, 0x40],
+  j: [0x20, 0x40, 0x44, 0x3d, 0x80],
+  k: [0x7f, 0x10, 0x28, 0x44, 0x40],
+  l: [0x00, 0x41, 0x7f, 0x40, 0x40],
+  m: [0x7c, 0x04, 0x78, 0x04, 0x78],
+  n: [0x7c, 0x08, 0x04, 0x78, 0x40],
+  o: [0x38, 0x44, 0x44, 0x38, 0x40],
+  p: [0xfc, 0x24, 0x24, 0x18, 0x00],
+  q: [0x18, 0x24, 0x24, 0xfc, 0x80],
+  r: [0x7c, 0x08, 0x04, 0x0c, 0x40],
+  s: [0x48, 0x54, 0x54, 0x28, 0x40],
+  t: [0x04, 0x3f, 0x44, 0x40, 0x40],
+  u: [0x3c, 0x40, 0x40, 0x7c, 0x40],
+  v: [0x1c, 0x20, 0x40, 0x20, 0x40],
+  w: [0x3c, 0x40, 0x3c, 0x40, 0x3c],
+  x: [0x44, 0x28, 0x10, 0x28, 0x44],
+  y: [0x1c, 0xa0, 0xa0, 0x7c, 0x80],
+  z: [0x44, 0x64, 0x54, 0x4c, 0x40],
 
-  // Punctuation
+  // Shared Punctuation
   '!': [0x00, 0x00, 0x5f, 0x00, 0x00],
   '?': [0x20, 0x40, 0x4d, 0x50, 0x20],
   '.': [0x00, 0x60, 0x60, 0x00, 0x00],
   ',': [0x00, 0x80, 0x60, 0x00, 0x00],
 };
-
 // Helper: flip font column bits vertically (fix upside-down letters)
 function flipColumnVertical(col) {
   let flipped = 0;
@@ -698,7 +685,7 @@ export function generateTextFrames(
     // then its uppercase form (covers fonts with a smaller symbol set,
     // like CURSIVE_FONT's punctuation), then fall back to a blank column.
     const glyph = fontMap[ch] || fontMap[ch.toUpperCase()] || fontMap[' '];
-    font === 'cursive' ? null : cols.push(0x00); // spacing
+    cols.push(0x00); // spacing
     // Add columns in forward order
     for (let ci = 0; ci < glyph.length; ci++) {
       cols.push(glyph[ci]);
