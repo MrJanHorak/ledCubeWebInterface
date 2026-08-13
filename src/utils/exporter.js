@@ -175,78 +175,58 @@ void loop() {
 `;
 }
 
-export function generateESP32WebAppSketch({
-  mode = 'ap',
-  ssid = 'LED_Cube_AP',
-  password = 'ledcube123',
-} = {}) {
-  const isSta = mode === 'sta';
-  const wifiSetup = isSta
-    ? `  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-  Serial.print("Connecting to Wi-Fi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(300);
-    Serial.print(".");
-  }
-  Serial.println();
-  Serial.print("Connected! Open this in a browser: http://");
-  Serial.println(WiFi.localIP());`
-    : `  WiFi.softAP(ssid, password);
-  Serial.print("Access Point \\"");
-  Serial.print(ssid);
-  Serial.println("\\" started. Connect to it, then open http://192.168.4.1 in a browser.");`;
-
-  return `// ESP32 Self-Hosted Web App + Wi-Fi Relay Sketch for LED Cube
+export function generateESP32WebAppSketch() {
+  return `// ESP32 Self-Hosted Web App Sketch for LED Cube
 //
-// Serves this website's own built files directly from the ESP32's flash
-// filesystem (LittleFS), so anyone on the network can open a browser,
-// navigate to the ESP32's address, and use the full designer UI with no
-// internet connection and no separate site to host anywhere else. Also
-// runs the same WebSocket relay as the Wi-Fi Relay sketch (port 81), so
-// the page it serves can stream frames to the cube the same way.
+// HOW IT WORKS — no config required:
+//   1. Install libraries (see below) and flash this sketch.
+//   2. Upload the website files to LittleFS (see step 5 below).
+//   3. On first boot the ESP32 creates a hotspot called "LED Cube Setup".
+//   4. Connect any phone/laptop to that hotspot — a captive portal opens.
+//   5. Enter your home Wi-Fi password. The ESP32 saves it and reboots.
+//   6. It connects to your network and serves the full designer app at
+//      http://ledcube.local — no internet required.
+//   7. Open ledcube.local in your browser. The app detects the .local
+//      hostname and auto-switches to Dual Mode (Library tab appears,
+//      Connect Serial is hidden). Design and push animations directly.
 //
-// I can't test this against real hardware from where this was generated --
-// treat it as a solid starting point, not a guaranteed-working final
-// sketch. The parts most likely to need small adjustments for your exact
-// installed library versions are the ESPAsyncWebServer include/API and the
-// partition scheme (see step 6).
+// To reset Wi-Fi credentials, hold GPIO0 low for 3 seconds on boot.
+//
+// DUAL MODE PROTOCOL (handled automatically by the app):
+//   Byte 0 = command:  0x01 live stream | 0x02 save Slot 1 | 0x03 save Slot 2
+//   Bytes 1+ = packed frames, 64 bytes each
 //
 // SETUP (one-time):
-// 1. Arduino Library Manager: install "ESPAsyncWebServer" (and its
-//    "AsyncTCP" dependency) and "WebSockets" by Markus Sattler.
-// 2. Build this website for production (npm run build) -- that produces
-//    a dist/ folder.
-// 3. Put the CONTENTS of dist/ (not the dist folder itself) into a
-//    folder named exactly "data", placed next to this .ino file.
-// 4. Install the "ESP32 Sketch Data Upload" tool for the Arduino IDE if
-//    you don't have it, then use Tools -> ESP32 Sketch Data Upload to
-//    flash the contents of data/ to LittleFS.
-// 5. Flash this sketch normally (a separate step from #4).
-// 6. Tools -> Partition Scheme: pick one with a large enough SPIFFS/
-//    LittleFS partition for this app's build output (currently several
-//    hundred KB) -- many boards' *default* scheme only allocates a small
-//    partition meant for simple config files, not a whole web app. Gzip-
-//    compressing the dist/ files before uploading is worth doing too,
-//    both to fit more comfortably and to transfer faster to browsers.
-// 7. ${isSta ? 'Check the Serial Monitor after flashing for the IP address it was assigned, then open that address in a browser.' : "Connect a phone/computer to the Wi-Fi network it creates, then open 192.168.4.1 in a browser."}
+//   1. Libraries needed (Arduino Library Manager):
+//        - WiFiManager by tzapu
+//        - ESPAsyncWebServer + AsyncTCP
+//        - WebSockets by Markus Sattler
+//        - ESPmDNS (built in to ESP32 Arduino core)
+//   2. Click "Download Website Files" on the Export tab to get the data/ zip.
+//   3. Extract the zip into a folder called "data" next to this .ino file.
+//   4. Tools -> ESP32 Sketch Data Upload to flash the data/ folder to LittleFS.
+//      (Install the upload tool from: https://github.com/me-no-dev/arduino-esp32fs-plugin)
+//   5. Tools -> Partition Scheme: pick "Default 4MB with spiffs" or any
+//      scheme with at least 1 MB for LittleFS.
+//   6. Flash this sketch (Upload button).
 
 #include <WiFi.h>
+#include <WiFiManager.h>
 #include <WebSocketsServer.h>
 #include <ESPAsyncWebServer.h>
+#include <ESPmDNS.h>
 #include <LittleFS.h>
+${DUAL_MODE_HANDLER_C}
 
-const char* ssid = "${ssid}";
-const char* password = "${password}";
+#define MDNS_HOSTNAME "ledcube"
+#define RESET_PIN     0
 
-AsyncWebServer server(80);
+AsyncWebServer  server(80);
 WebSocketsServer webSocket(81);
 
-void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
   if (type == WStype_BIN) {
-    for (size_t i = 0; i < length; i++) {
-      Serial2.write(payload[i]);
-    }
+    handleDualModeMessage(payload, length);
   } else if (type == WStype_TEXT) {
     if (length >= 4 && payload[0] == 'P' && payload[1] == 'I' && payload[2] == 'N' && payload[3] == 'G') {
       webSocket.sendTXT(num, "PONG");
@@ -256,81 +236,264 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 
 void setup() {
   Serial.begin(38400);
-  // Cube data goes out Serial2's hardware UART (TX2 = GPIO17, RX2 = GPIO16
-  // on most boards) through a level shifter to the cube's data pin -- NOT
-  // over the USB port, which is what "Serial" is.
   Serial2.begin(38400, SERIAL_8N1, 16, 17);
 
   if (!LittleFS.begin(true)) {
-    Serial.println("LittleFS mount failed -- did you upload the data/ folder? See setup notes above.");
+    Serial.println("LittleFS mount failed — did you upload the data/ folder? See setup step 4.");
     return;
   }
 
-${wifiSetup}
+  // Hold RESET_PIN low 3 s to wipe Wi-Fi credentials
+  pinMode(RESET_PIN, INPUT_PULLUP);
+  delay(100);
+  if (digitalRead(RESET_PIN) == LOW) {
+    unsigned long t = millis();
+    while (digitalRead(RESET_PIN) == LOW && millis() - t < 3000) delay(50);
+    if (millis() - t >= 3000) {
+      WiFiManager wm;
+      wm.resetSettings();
+      Serial.println("Wi-Fi credentials wiped — rebooting into setup portal...");
+      delay(500);
+      ESP.restart();
+    }
+  }
 
-  // Serve the built website straight from LittleFS
+  loadSlotsFromNVS();
+
+  WiFiManager wm;
+  wm.setConfigPortalTimeout(180);
+  if (!wm.autoConnect("LED Cube Setup")) {
+    Serial.println("Setup portal timed out — rebooting...");
+    ESP.restart();
+  }
+
+  Serial.print("Connected! Open http://" MDNS_HOSTNAME ".local in your browser. IP: ");
+  Serial.println(WiFi.localIP());
+
+  if (MDNS.begin(MDNS_HOSTNAME)) {
+    MDNS.addService("http", "tcp", 80);
+    MDNS.addService("ws",   "tcp", 81);
+  }
+
   server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
   server.begin();
 
-  // Same WebSocket relay as the Wi-Fi Relay sketch, so the page above can
-  // stream frames to the cube controller over Serial
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
 }
 
 void loop() {
   webSocket.loop();
+  playNextFrame();
 }
 `;
 }
 
-export function generateESP32WiFiRelaySketch({
-  mode = 'ap',
-  ssid = 'LED_Cube_AP',
-  password = 'ledcube123',
-} = {}) {
-  const isSta = mode === 'sta';
-  const wifiSetup = isSta
-    ? `  // Connect to your existing Wi-Fi network (STA mode)
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-  Serial.print("Connecting to Wi-Fi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(300);
-    Serial.print(".");
-  }
-  Serial.println();
-  Serial.print("Connected! IP address: ");
-  Serial.println(WiFi.localIP());
-  Serial.println("Use this IP address in the website's Wi-Fi IP field.");`
-    : `  // Create our own Access Point (no existing Wi-Fi network needed)
-  WiFi.softAP(ssid, password);
-  Serial.print("Access Point started. Connect to Wi-Fi network \\"");
-  Serial.print(ssid);
-  Serial.println("\\" and use 192.168.4.1 in the website's Wi-Fi IP field.");`;
+// ---------------------------------------------------------------------------
+// Shared C++ logic inserted into every Wi-Fi sketch that understands the
+// Dual Mode binary protocol sent by sendFrames() in App.jsx:
+//
+//   Byte 0  : command flag
+//               0x01 = live stream  -- play the payload frames in a loop
+//               0x02 = save Slot 1  -- persist to NVS, play on next boot
+//               0x03 = save Slot 2  -- same, second slot
+//   Bytes 1+ : packed frame data, 64 bytes per frame (one byte per column,
+//              each byte encodes the 8 Z-layer bits for that column).
+//              Total length = 1 + (frameCount * 64).
+//
+// The slot data is stored in NVS (Preferences) so it survives power cycles.
+// On boot, if no live-stream has arrived yet, the last saved slot plays.
+// ---------------------------------------------------------------------------
+const DUAL_MODE_HANDLER_C = `
+#include <Preferences.h>
 
-  return `// ESP32 Wireless Wi-Fi WebSockets Relay Sketch for LED Cube
+#define CMD_STREAM  0x01
+#define CMD_SLOT1   0x02
+#define CMD_SLOT2   0x03
+#define FRAME_BYTES 64
+#define MAX_FRAMES  512   // 512 * 64 = 32 KB -- fits comfortably in heap
+
+Preferences prefs;
+
+// Live-stream buffer (heap allocated, replaced on each CMD_STREAM message)
+uint8_t* liveFrames    = nullptr;
+int      liveFrameCount = 0;
+int      liveFrameIdx   = 0;
+bool     liveMode       = false;
+
+// Slot buffers (loaded from NVS on boot, replaced by CMD_SLOT1/2 messages)
+uint8_t* slot1Frames    = nullptr;
+int      slot1FrameCount = 0;
+uint8_t* slot2Frames    = nullptr;
+int      slot2FrameCount = 0;
+
+// Which slot is actively playing when not in live mode
+int activeSlot = 1;
+int slotFrameIdx = 0;
+
+// ---- NVS helpers -----------------------------------------------------------
+
+void saveSlotToNVS(int slot, const uint8_t* data, int frameCount) {
+  prefs.begin("ledcube", false);
+  char key[16];
+  snprintf(key, sizeof(key), "slot%d_fc", slot);
+  prefs.putInt(key, frameCount);
+  snprintf(key, sizeof(key), "slot%d_data", slot);
+  prefs.putBytes(key, data, (size_t)frameCount * FRAME_BYTES);
+  prefs.end();
+}
+
+uint8_t* loadSlotFromNVS(int slot, int* outFrameCount) {
+  prefs.begin("ledcube", true);
+  char key[16];
+  snprintf(key, sizeof(key), "slot%d_fc", slot);
+  int fc = prefs.getInt(key, 0);
+  if (fc <= 0 || fc > MAX_FRAMES) { prefs.end(); *outFrameCount = 0; return nullptr; }
+  uint8_t* buf = (uint8_t*)malloc((size_t)fc * FRAME_BYTES);
+  if (!buf) { prefs.end(); *outFrameCount = 0; return nullptr; }
+  snprintf(key, sizeof(key), "slot%d_data", slot);
+  prefs.getBytes(key, buf, (size_t)fc * FRAME_BYTES);
+  prefs.end();
+  *outFrameCount = fc;
+  return buf;
+}
+
+// ---- Incoming WebSocket binary message handler -----------------------------
+
+void handleDualModeMessage(uint8_t* payload, size_t length) {
+  if (length < 1) return;
+  uint8_t cmd = payload[0];
+  size_t  dataLen = length - 1;
+  uint8_t* data   = payload + 1;
+
+  int frameCount = (int)(dataLen / FRAME_BYTES);
+  if (frameCount < 1) return;
+
+  uint8_t* buf = (uint8_t*)malloc((size_t)frameCount * FRAME_BYTES);
+  if (!buf) return;
+  memcpy(buf, data, (size_t)frameCount * FRAME_BYTES);
+
+  if (cmd == CMD_STREAM) {
+    free(liveFrames);
+    liveFrames     = buf;
+    liveFrameCount = frameCount;
+    liveFrameIdx   = 0;
+    liveMode       = true;
+    Serial.printf("Live stream: %d frame(s)\\n", frameCount);
+  } else if (cmd == CMD_SLOT1) {
+    free(slot1Frames);
+    slot1Frames     = buf;
+    slot1FrameCount = frameCount;
+    activeSlot      = 1;
+    slotFrameIdx    = 0;
+    liveMode        = false;
+    saveSlotToNVS(1, buf, frameCount);
+    Serial.printf("Saved %d frame(s) to Slot 1\\n", frameCount);
+  } else if (cmd == CMD_SLOT2) {
+    free(slot2Frames);
+    slot2Frames     = buf;
+    slot2FrameCount = frameCount;
+    activeSlot      = 2;
+    slotFrameIdx    = 0;
+    liveMode        = false;
+    saveSlotToNVS(2, buf, frameCount);
+    Serial.printf("Saved %d frame(s) to Slot 2\\n", frameCount);
+  } else {
+    free(buf); // unknown command
+  }
+}
+
+// ---- Frame playback (call from loop()) -------------------------------------
 //
-// ${isSta ? 'Joins your existing Wi-Fi network (STA mode)' : 'Creates its own Wi-Fi Access Point'} and starts a WebSocket server.
-// Web app streams LED cube frames wirelessly over WebSockets, which ESP32 forwards
-// to the LED Cube controller over Serial.
+// frameDelayMs: how long to hold each frame (mirrors the website's Delay
+// slider -- 300 ms is the default). The website does NOT send timing yet;
+// adjust this constant to taste or add it to the protocol later.
+
+#define FRAME_DELAY_MS 300
+
+unsigned long lastFrameTime = 0;
+
+void playNextFrame() {
+  unsigned long now = millis();
+  if (now - lastFrameTime < FRAME_DELAY_MS) return;
+  lastFrameTime = now;
+
+  uint8_t* src   = nullptr;
+  int      count = 0;
+  int*     idx   = nullptr;
+
+  if (liveMode && liveFrames && liveFrameCount > 0) {
+    src   = liveFrames;
+    count = liveFrameCount;
+    idx   = &liveFrameIdx;
+  } else if (activeSlot == 1 && slot1Frames && slot1FrameCount > 0) {
+    src   = slot1Frames;
+    count = slot1FrameCount;
+    idx   = &slotFrameIdx;
+  } else if (activeSlot == 2 && slot2Frames && slot2FrameCount > 0) {
+    src   = slot2Frames;
+    count = slot2FrameCount;
+    idx   = &slotFrameIdx;
+  } else {
+    return; // nothing loaded yet
+  }
+
+  uint8_t* frame = src + (*idx) * FRAME_BYTES;
+
+  // Send as a 65-byte packet: 0xF2 header + 64 column bytes
+  uint8_t buf[65];
+  buf[0] = 0xF2;
+  memcpy(buf + 1, frame, FRAME_BYTES);
+  Serial2.write(buf, 65);
+
+  *idx = (*idx + 1) % count;
+}
+
+void loadSlotsFromNVS() {
+  slot1Frames = loadSlotFromNVS(1, &slot1FrameCount);
+  if (slot1FrameCount > 0) Serial.printf("Slot 1 loaded: %d frame(s)\\n", slot1FrameCount);
+  slot2Frames = loadSlotFromNVS(2, &slot2FrameCount);
+  if (slot2FrameCount > 0) Serial.printf("Slot 2 loaded: %d frame(s)\\n", slot2FrameCount);
+}
+`;
+
+export function generateESP32WiFiRelaySketch() {
+  return `// ESP32 Wireless Wi-Fi Relay Sketch for LED Cube
 //
-// Dependencies: WebSockets library by Markus Sattler (install via Arduino Library Manager)
+// HOW IT WORKS — no config required:
+//   1. Flash this sketch.
+//   2. On first boot the ESP32 creates a hotspot called "LED Cube Setup".
+//   3. Connect any phone/laptop to that hotspot — a captive portal opens.
+//   4. Enter your home Wi-Fi password. The ESP32 saves it and reboots.
+//   5. It connects to your network and is reachable at http://ledcube.local
+//   6. Open ledcube.local in your browser — the app detects the .local
+//      hostname and automatically switches to Dual Mode (Library tab).
+//
+// To reset Wi-Fi credentials, hold GPIO0 low for 3 seconds on boot.
+//
+// DUAL MODE PROTOCOL (handled automatically by the app):
+//   Byte 0 = command:  0x01 live stream | 0x02 save Slot 1 | 0x03 save Slot 2
+//   Bytes 1+ = packed frames, 64 bytes each
+//
+// Libraries needed (Arduino Library Manager):
+//   - WiFiManager by tzapu
+//   - WebSockets by Markus Sattler
+//   - ESPmDNS (built in to the ESP32 Arduino core)
 
 #include <WiFi.h>
+#include <WiFiManager.h>
 #include <WebSocketsServer.h>
+#include <ESPmDNS.h>
+${DUAL_MODE_HANDLER_C}
 
-const char* ssid = "${ssid}";
-const char* password = "${password}";
+#define MDNS_HOSTNAME "ledcube"
+#define RESET_PIN     0   // GPIO0 (BOOT button on most boards) — hold 3s to wipe credentials
 
-WebSocketsServer webSocket = WebSocketsServer(81);
+WebSocketsServer webSocket(81);
 
-void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
   if (type == WStype_BIN) {
-    // Binary WebSocket message containing cube frame data
-    for (size_t i = 0; i < length; i++) {
-      Serial2.write(payload[i]);
-    }
+    handleDualModeMessage(payload, length);
   } else if (type == WStype_TEXT) {
     if (length >= 4 && payload[0] == 'P' && payload[1] == 'I' && payload[2] == 'N' && payload[3] == 'G') {
       webSocket.sendTXT(num, "PONG");
@@ -341,21 +504,51 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 void setup() {
   Serial.begin(38400);
   // Cube data goes out Serial2's hardware UART (TX2 = GPIO17, RX2 = GPIO16
-  // on most boards) through a level shifter to the cube's data pin -- NOT
-  // over the USB port, which is what "Serial" is. Mixing the two on one
-  // UART is what causes garbled bytes in the Serial Monitor and nothing
-  // reaching the cube.
+  // on most boards) through a level shifter to the cube's data pin.
   Serial2.begin(38400, SERIAL_8N1, 16, 17);
 
-${wifiSetup}
+  // Hold RESET_PIN low for 3 s on boot to wipe saved Wi-Fi credentials
+  pinMode(RESET_PIN, INPUT_PULLUP);
+  delay(100);
+  if (digitalRead(RESET_PIN) == LOW) {
+    unsigned long t = millis();
+    while (digitalRead(RESET_PIN) == LOW && millis() - t < 3000) delay(50);
+    if (millis() - t >= 3000) {
+      WiFiManager wm;
+      wm.resetSettings();
+      Serial.println("Wi-Fi credentials wiped — rebooting into setup portal...");
+      delay(500);
+      ESP.restart();
+    }
+  }
 
-  // Start WebSocket server on port 81
+  loadSlotsFromNVS();
+
+  // Auto-connect or launch setup portal if credentials are missing/wrong
+  WiFiManager wm;
+  wm.setConfigPortalTimeout(180); // give up after 3 min and reboot
+  if (!wm.autoConnect("LED Cube Setup")) {
+    Serial.println("Setup portal timed out — rebooting...");
+    ESP.restart();
+  }
+
+  Serial.print("Connected! IP: ");
+  Serial.println(WiFi.localIP());
+
+  if (MDNS.begin(MDNS_HOSTNAME)) {
+    Serial.println("mDNS started — open http://" MDNS_HOSTNAME ".local in your browser");
+    MDNS.addService("http", "tcp", 80);
+    MDNS.addService("ws",   "tcp", 81);
+  }
+
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
+  Serial.println("WebSocket server ready on port 81");
 }
 
 void loop() {
   webSocket.loop();
+  playNextFrame();
 }
 `;
 }

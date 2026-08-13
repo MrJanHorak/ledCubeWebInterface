@@ -644,6 +644,10 @@ body {
 .sidebar-content .btn-row:last-child {
   margin-bottom: 0;
 }
+
+.sidebar-content button {
+  margin: 4px;
+}
 .tools-panel .files,
 .tools-panel .serial {
   display: flex;
@@ -660,6 +664,14 @@ body {
 .guide-panel li {
   margin-bottom: 6px;
   line-height: 1.4;
+}
+.step-list {
+  margin: 8px 0 14px 20px;
+  padding: 0;
+}
+.step-list li {
+  margin-bottom: 8px;
+  line-height: 1.45;
 }
 .guide-grid {
   display: grid;
@@ -878,6 +890,64 @@ select {
   color: var(--text-muted);
   font-size: 13px;
 }
+
+/* ── Tooltip (Tip component) ───────────────────────────────────────────── */
+.tip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1px solid var(--border-hairline);
+  background: var(--bg-panel-raised);
+  color: var(--text-muted);
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  cursor: help;
+  margin-left: 4px;
+  vertical-align: middle;
+  position: relative;
+}
+.tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border-hairline);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: var(--font-body);
+  font-weight: 400;
+  padding: 6px 9px;
+  border-radius: var(--radius-sm);
+  width: max-content;
+  max-width: 230px;
+  white-space: normal;
+  line-height: 1.4;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 200;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+.tip:hover::after {
+  opacity: 1;
+}
+
+/* ── Step list (Help Hub) ──────────────────────────────────────────────── */
+.step-list {
+  margin: 8px 0 14px 20px;
+  padding: 0;
+}
+.step-list li {
+  margin-bottom: 8px;
+  line-height: 1.45;
+}
+
 
 /* ---------------------------------------------------------------------- */
 /* Toast                                                                   */

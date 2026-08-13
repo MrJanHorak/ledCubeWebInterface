@@ -71,6 +71,12 @@ function EffectAccordion({ title, open, onToggle, children }) {
   );
 }
 
+// Lightweight tooltip: renders an inline ? badge; the popup text is shown
+// via a CSS ::after pseudo-element using the data-tip attribute.
+function Tip({ text }) {
+  return <span className='tip' data-tip={text}>?</span>;
+}
+
 function drawImageCover(ctx, img, size = 8) {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, size, size);
@@ -78,6 +84,14 @@ function drawImageCover(ctx, img, size = 8) {
   const w = img.width * scale;
   const h = img.height * scale;
   ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+}
+
+// Detects whether the app is being served from an ESP32 (IP address or
+// .local mDNS hostname) versus a hosted environment like Netlify.
+function detectESP32Mode() {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname;
+  return /^[0-9.]+$/.test(host) || host.endsWith('.local');
 }
 
 function loadAutosave() {
@@ -124,6 +138,9 @@ export default function App() {
     const auto = loadAutosave();
     return auto && typeof auto.delayMs === 'number' ? auto.delayMs : 300;
   });
+  const [isESP32Mode] = useState(() => detectESP32Mode());
+  // In ESP32 mode the user picks which library slot to send to (or live stream)
+  const [esp32LibrarySlot, setEsp32LibrarySlot] = useState('stream'); // 'stream' | 'slot1' | 'slot2'
   const [serialPort, setSerialPort] = useState(null);
   const [targetDevice, setTargetDevice] = useState('esp32'); // 'arduino' | 'esp32'
   const [connectionMode, setConnectionMode] = useState('serial'); // 'serial' | 'wifi'
@@ -954,6 +971,20 @@ export default function App() {
       navigator.serial.removeEventListener('disconnect', handleDisconnect);
   }, [serialPort]);
 
+  // In ESP32 mode, connect WebSocket automatically on mount using the page's own host.
+  useEffect(() => {
+    if (!isESP32Mode) return;
+    const host = window.location.hostname;
+    const url = `ws://${host}:81`;
+    openWebSocket(url)
+      .then((ws) => {
+        setWebSocket(ws);
+        showToast('Auto-connected to ESP32 WebSocket');
+      })
+      .catch(() => showToast('Could not auto-connect to ESP32 WebSocket'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function connectWiFi() {
     try {
       setConnecting(true);
@@ -1034,6 +1065,52 @@ export default function App() {
   function stopStreaming() {
     streamingRef.current = false;
   }
+
+  // Sends the entire animation as a single binary payload.
+  // Web Serial mode: iterates frames one by one with per-frame delays.
+  // ESP32 mode: flattens all frames into one Uint8Array with a command
+  //   prefix byte (0x01 = live stream, 0x02 = save to Slot 1, 0x03 = save to Slot 2).
+  async function sendFrames() {
+    if (isESP32Mode) {
+      if (!webSocket || webSocket.readyState !== WebSocket.OPEN) {
+        return showToast('ESP32 WebSocket is not connected');
+      }
+      const commandFlag =
+        esp32LibrarySlot === 'slot1' ? 0x02 :
+        esp32LibrarySlot === 'slot2' ? 0x03 :
+        0x01; // 'stream'
+
+      const totalBytes = 1 + frames.length * 64;
+      const buf = new Uint8Array(totalBytes);
+      buf[0] = commandFlag;
+      frames.forEach((frame, i) => {
+        const transformed = mirrorX(frame);
+        for (let b = 0; b < 64; b++) buf[1 + i * 64 + b] = transformed[b] || 0;
+      });
+      writeToWebSocket(webSocket, buf);
+      const label = esp32LibrarySlot === 'slot1' ? 'Slot 1' :
+                    esp32LibrarySlot === 'slot2' ? 'Slot 2' : 'Live Stream';
+      showToast(`Sent ${frames.length} frame(s) to ESP32 (${label})`);
+    } else {
+      // Web Serial mode: send frames one at a time with per-frame delays
+      if (!serialPort) return showToast('No serial port connected');
+      if (!frames.length) return showToast('Nothing to send');
+      const openCmd = new Uint8Array(70).fill(0xad);
+      await writeToPort(serialPort, openCmd);
+      for (let i = 0; i < frames.length; i++) {
+        const transformed = mirrorX(frames[i]);
+        const buf = new Uint8Array(65);
+        buf[0] = 0xf2;
+        for (let b = 0; b < 64; b++) buf[b + 1] = transformed[b] || 0;
+        await writeToPort(serialPort, buf);
+        const holdMs = frameDelays[i];
+        const effectiveMs = typeof holdMs === 'number' ? holdMs : delayMs;
+        await new Promise((resolve) => setTimeout(resolve, Math.max(50, effectiveMs)));
+      }
+      showToast(`Sent ${frames.length} frame(s) via USB Serial`);
+    }
+  }
+
 
   function copyToClipboard(text) {
     navigator.clipboard
@@ -1369,9 +1446,6 @@ export default function App() {
               open={openSections.image}
               onToggle={() => toggleSection('image')}
             >
-              <p className='muted'>
-                Downsampled to 8×8 and thresholded to on/off pixels.
-              </p>
               <input
                 ref={imageInputRef}
                 type='file'
@@ -1426,9 +1500,6 @@ export default function App() {
               open={openSections.audio}
               onToggle={() => toggleSection('audio')}
             >
-              <p className='muted'>
-                Records your mic into bar-chart frames you can edit or export.
-              </p>
               <div className='form-row'>
                 <label>
                   Seconds:
@@ -1459,7 +1530,6 @@ export default function App() {
               open={openSections.patterns}
               onToggle={() => toggleSection('patterns')}
             >
-              <p className='muted'>Procedural animations for the timeline.</p>
               <div className='pattern-grid'>
                 <button onClick={startSpherePattern}>💠 Sphere</button>
                 <button onClick={startRainPattern}>🌧️ Rain</button>
@@ -1529,6 +1599,14 @@ export default function App() {
               >
                 Tools
               </button>
+              {isESP32Mode && (
+                <button
+                  className={activeTab === 'library' ? 'active' : ''}
+                  onClick={() => setActiveTab('library')}
+                >
+                  Library
+                </button>
+              )}
               <button
                 className={activeTab === 'export' ? 'active' : ''}
                 onClick={() => setActiveTab('export')}
@@ -1619,16 +1697,8 @@ export default function App() {
                   <button className='btn-danger' onClick={clearAllFrames}>
                     🗑️ Clear All Frames
                   </button>
-                  <p className='muted' style={{ marginTop: 4 }}>
-                    Scroll Text / Spin Glyph / Spin Emoticon / Patterns now
-                    add to the end of the timeline by default — use this to
-                    start a fresh animation instead. (Undo works here too.)
-                  </p>
 
-                  <h4>Presets</h4>
-                  <p className='muted' style={{ marginTop: -4 }}>
-                    Saved in this browser only (not synced or shared).
-                  </p>
+                  <h4>Presets <Tip text="Saved in this browser only — not synced or shared" /></h4>
                   <div className='files'>
                     <input
                       type='text'
@@ -1698,10 +1768,7 @@ export default function App() {
                     </button>
                   </div>
 
-                  <h4>Live Stream ({targetDevice === 'esp32' ? 'ESP32' : 'Arduino'})</h4>
-                  <p className='muted' style={{ marginTop: -4 }}>
-                    Stream live animation frames over {targetDevice === 'esp32' ? 'USB Serial or Wi-Fi' : 'USB Serial'}.
-                  </p>
+                  <h4>Live Stream <Tip text="Send frames to a connected cube in real time over USB or Wi-Fi" /></h4>
 
                   {targetDevice === 'esp32' && (
                     <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
@@ -1722,12 +1789,14 @@ export default function App() {
 
                   {connectionMode === 'serial' || targetDevice === 'arduino' ? (
                     <div className='serial'>
-                      <button
-                        onClick={connectSerial}
-                        disabled={!!serialPort || connecting}
-                      >
-                        {connecting ? 'Connecting…' : 'Connect USB'}
-                      </button>
+                      {!isESP32Mode && (
+                        <button
+                          onClick={connectSerial}
+                          disabled={!!serialPort || connecting}
+                        >
+                          {connecting ? 'Connecting…' : 'Connect USB'}
+                        </button>
+                      )}
                       <button
                         onClick={disconnectSerial}
                         disabled={!serialPort}
@@ -1750,9 +1819,8 @@ export default function App() {
                     </div>
                   ) : (
                     <div className='serial' style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      <label className='muted' style={{ fontSize: 12 }}>
-                        ESP32 IP address (<code>192.168.4.1</code> for Access
-                        Point mode):
+                      <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                        ESP32 IP <Tip text="192.168.4.1 for AP mode. Use ledcube.local if you flashed the auto-setup sketch." />
                       </label>
                       <input
                         type='text'
@@ -1793,6 +1861,48 @@ export default function App() {
                 </div>
               )}
 
+              {activeTab === 'library' && (
+                <div>
+                  <h4>Send to ESP32</h4>
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+                    <button
+                      className={esp32LibrarySlot === 'stream' ? 'btn-primary' : ''}
+                      onClick={() => setEsp32LibrarySlot('stream')}
+                      title="Play immediately on the cube without saving"
+                    >
+                      Live Stream
+                    </button>
+                    <button
+                      className={esp32LibrarySlot === 'slot1' ? 'btn-primary' : ''}
+                      onClick={() => setEsp32LibrarySlot('slot1')}
+                      title="Save to Slot 1 — persists across power cycles"
+                    >
+                      Slot 1
+                    </button>
+                    <button
+                      className={esp32LibrarySlot === 'slot2' ? 'btn-primary' : ''}
+                      onClick={() => setEsp32LibrarySlot('slot2')}
+                      title="Save to Slot 2 — persists across power cycles"
+                    >
+                      Slot 2
+                    </button>
+                  </div>
+                  <button
+                    className='btn-primary'
+                    onClick={sendFrames}
+                    disabled={!webSocket || webSocket.readyState !== WebSocket.OPEN}
+                    style={{ width: '100%' }}
+                  >
+                    ▶ Send {frames.length} Frame{frames.length !== 1 ? 's' : ''}
+                  </button>
+                  <div style={{ marginTop: 10, fontSize: '0.82em', color: 'var(--text-muted)' }}>
+                    {webSocket && webSocket.readyState === WebSocket.OPEN
+                      ? '🟢 Connected'
+                      : '🔴 Not connected — open ledcube.local to auto-connect'}
+                  </div>
+                </div>
+              )}
+
               {activeTab === 'export' && (
                 <div>
                   <h4>Target Device</h4>
@@ -1811,21 +1921,16 @@ export default function App() {
                     </button>
                   </div>
 
-                  <h4>Export Options ({targetDevice === 'esp32' ? 'ESP32' : 'Arduino'})</h4>
-                  <p className='muted' style={{ marginTop: -4 }}>
-                    Keep exports here, full setup and wiring help are in the ? Help Hub.
-                  </p>
+                  <h4>Code</h4>
                   <button
-                    onClick={() =>
-                      copyToClipboard(framesToCArray(frames, 'ANIM'))
-                    }
+                    title="Copy frames as a C array for use in your own sketch"
+                    onClick={() => copyToClipboard(framesToCArray(frames, 'ANIM'))}
                   >
                     Copy C Array
                   </button>
                   <button
-                    onClick={() =>
-                      downloadFile(generateHFile('ANIM', frames), 'ANIM.h')
-                    }
+                    title="Download a .h header file with the frame data"
+                    onClick={() => downloadFile(generateHFile('ANIM', frames), 'ANIM.h')}
                   >
                     Download .h
                   </button>
@@ -1833,160 +1938,77 @@ export default function App() {
                   {targetDevice === 'arduino' ? (
                     <>
                       <button
-                        onClick={() =>
-                          downloadFile(generateSketch('ANIM', frames), 'ANIM.ino')
-                        }
+                        title="Full Arduino sketch that plays this animation"
+                        onClick={() => downloadFile(generateSketch('ANIM', frames), 'ANIM.ino')}
                       >
                         Download Arduino .ino
                       </button>
                       <button
-                        onClick={() =>
-                          downloadFile(
-                            generateStreamingReceiverSketch(),
-                            'live_relay.ino',
-                          )
-                        }
+                        title="Relay sketch for USB live streaming from this site"
+                        onClick={() => downloadFile(generateStreamingReceiverSketch(), 'live_relay.ino')}
                       >
-                        Live Relay Sketch
+                        USB Relay Sketch
                       </button>
                     </>
                   ) : (
                     <>
                       <button
-                        onClick={() =>
-                          downloadFile(generateESP32Sketch('ANIM', frames), 'ANIM_ESP32.ino')
-                        }
+                        title="Full ESP32 sketch that plays this animation"
+                        onClick={() => downloadFile(generateESP32Sketch('ANIM', frames), 'ANIM_ESP32.ino')}
                       >
                         Download ESP32 .ino
                       </button>
                       <button
-                        onClick={() =>
-                          downloadFile(
-                            generateESP32LiveRelaySketch(),
-                            'esp32_live_relay.ino',
-                          )
-                        }
+                        title="Relay sketch for USB live streaming from this site"
+                        onClick={() => downloadFile(generateESP32LiveRelaySketch(), 'esp32_live_relay.ino')}
                       >
-                        ESP32 USB Relay Sketch
-                      </button>
-
-                      <div className='form-row' style={{ marginTop: 8 }}>
-                        <label>
-                          <input
-                            type='radio'
-                            name='esp32WifiMode'
-                            checked={esp32WifiMode === 'ap'}
-                            onChange={() => setEsp32WifiMode('ap')}
-                          />{' '}
-                          Host its own network (Access Point)
-                        </label>
-                        <label>
-                          <input
-                            type='radio'
-                            name='esp32WifiMode'
-                            checked={esp32WifiMode === 'sta'}
-                            onChange={() => setEsp32WifiMode('sta')}
-                          />{' '}
-                          Join my home Wi-Fi (Station)
-                        </label>
-                      </div>
-                      <div className='form-row'>
-                        <label>
-                          {esp32WifiMode === 'sta'
-                            ? 'Your Wi-Fi network name'
-                            : 'Access Point name'}
-                          :
-                          <input
-                            type='text'
-                            value={esp32Ssid}
-                            onChange={(e) => setEsp32Ssid(e.target.value)}
-                          />
-                        </label>
-                        <label>
-                          Password:
-                          <input
-                            type='text'
-                            value={esp32Password}
-                            onChange={(e) => setEsp32Password(e.target.value)}
-                          />
-                        </label>
-                      </div>
-                      <p className='muted' style={{ marginTop: -4 }}>
-                        {esp32WifiMode === 'sta'
-                          ? 'Station mode: use the IP shown in Serial Monitor.'
-                          : 'Access Point mode: connect to this network, then use 192.168.4.1.'}
-                      </p>
-                      <button
-                        onClick={() =>
-                          downloadFile(
-                            generateESP32WiFiRelaySketch({
-                              mode: esp32WifiMode,
-                              ssid: esp32Ssid,
-                              password: esp32Password,
-                            }),
-                            'esp32_wifi_relay.ino',
-                          )
-                        }
-                      >
-                        ESP32 Wi-Fi Relay Sketch
+                        USB Relay Sketch
                       </button>
                       <button
-                        onClick={() =>
-                          downloadFile(
-                            generateESP32WebAppSketch({
-                              mode: esp32WifiMode,
-                              ssid: esp32Ssid,
-                              password: esp32Password,
-                            }),
-                            'esp32_webapp_relay.ino',
-                          )
-                        }
+                        title="Flash this to use ledcube.local wirelessly — auto Wi-Fi setup on first boot"
+                        onClick={() => downloadFile(generateESP32WiFiRelaySketch(), 'esp32_wifi_relay.ino')}
                       >
-                        ESP32 Self-Hosted Web App Sketch
+                        📶 Wi-Fi Relay Sketch
                       </button>
-                      <p className='muted' style={{ marginTop: 4 }}>
-                        Runs this UI directly on the ESP32 (requires website files upload).
-                      </p>
                       <button
+                        title="Flash this + upload website files to serve the designer directly from the cube"
+                        onClick={() => downloadFile(generateESP32WebAppSketch(), 'esp32_webapp_relay.ino')}
+                      >
+                        🖥️ Self-Hosted App Sketch
+                      </button>
+                      <button
+                        title="Download the site files to upload to the ESP32's LittleFS (needed for Self-Hosted sketch)"
                         onClick={async () => {
                           try {
                             await downloadSiteZip();
-                            showToast('Website files downloaded — extract into a "data" folder next to the sketch');
+                            showToast('Extract into a "data" folder next to the sketch, then upload via LittleFS tool');
                           } catch (e) {
                             showToast(e.message || 'Failed to package website files');
                           }
                         }}
                       >
-                        ⬇ Download Website Files (data/ folder)
+                        ⬇ Website Files (data/)
                       </button>
-                      <p className='muted' style={{ marginTop: 4 }}>
-                        Packages the current site into a <code>data/</code>{' '}
-                        upload zip.
-                      </p>
                       <button
-                        onClick={() =>
-                          downloadFile(
-                            generateWiringGuide(),
-                            'esp32_wiring_guide.txt',
-                          )
-                        }
+                        title="Wiring diagram, library list, and troubleshooting tips"
+                        onClick={() => downloadFile(generateWiringGuide(), 'esp32_wiring_guide.txt')}
                       >
-                        📄 Download Wiring &amp; Troubleshooting Guide
-                      </button>
-                      <p className='muted' style={{ marginTop: 4 }}>
-                        Includes wiring map and common ESP32 serial pitfalls.
-                      </p>
-                      <button onClick={() => setShowHelp(true)}>
-                        Open Help Hub (?)
+                        📄 Wiring &amp; Setup Guide
                       </button>
                     </>
                   )}
 
                   <h4 style={{ marginTop: 16 }}>Share</h4>
-                  <button onClick={exportVideo}>🎥 Export Video</button>
-                  <p className='muted' style={{ marginTop: 4 }}>
-                    Records one full loop of the 3D preview as a .webm video.
-                  </p>
+                  <button
+                    title="Record one full loop of the 3D preview as a .webm video"
+                    onClick={exportVideo}
+                  >
+                    🎥 Export Video
+                  </button>
+
+                  <div style={{ marginTop: 16 }}>
+                    <button onClick={() => setShowHelp(true)}>? Help Hub</button>
+                  </div>
                 </div>
               )}
             </div>
