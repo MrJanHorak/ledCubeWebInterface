@@ -652,6 +652,40 @@ body {
   flex-wrap: wrap;
   margin-bottom: 10px;
 }
+.guide-panel ol,
+.guide-panel ul {
+  margin: 8px 0 14px 18px;
+  padding: 0;
+}
+.guide-panel li {
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+.guide-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.guide-card {
+  border: 1px solid var(--border-hairline);
+  background: var(--bg-panel-raised);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+}
+.guide-card .muted {
+  margin: 4px 0 0;
+}
+.guide-card ol {
+  margin-bottom: 2px;
+}
+.guide-card-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+  color: var(--accent-amber);
+}
 
 /* ---------------------------------------------------------------------- */
 /* Buttons                                                                 */
@@ -769,8 +803,10 @@ select {
   border: 1px solid var(--border-hairline);
   padding: 22px;
   border-radius: var(--radius-lg);
-  width: min(720px, 90%);
-  max-width: 720px;
+  width: min(940px, 94%);
+  max-width: 940px;
+  max-height: 86vh;
+  overflow: auto;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
 }
 .help-box h2 {
@@ -789,30 +825,54 @@ select {
   font-family: var(--font-mono);
   font-weight: 600;
 }
-.help-content {
+.help-actions {
   display: flex;
-  gap: 18px;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 14px;
 }
-.help-left {
-  flex: 1;
+.help-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 14px;
 }
-.help-right {
-  width: 320px;
+.help-tab {
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-hairline);
+  background: var(--bg-panel-raised);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.help-tab:hover {
+  color: var(--text-primary);
+}
+.help-tab.active {
+  color: #241503;
+  border-color: var(--accent-amber);
+  background: linear-gradient(180deg, #ffc773, var(--accent-amber));
+  font-weight: 600;
 }
 .help-media {
   border: 1px dashed var(--border-hairline);
   border-radius: var(--radius-md);
-  padding: 12px;
+  padding: 10px 12px;
   background: var(--bg-inset);
 }
-.media-placeholder {
-  height: 140px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-faint);
-  text-align: center;
-  font-size: 13px;
+.help-hub {
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+.wiring-snippet {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  line-height: 1.45;
 }
 .muted {
   color: var(--text-muted);

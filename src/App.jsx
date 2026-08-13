@@ -1700,7 +1700,7 @@ export default function App() {
 
                   <h4>Live Stream ({targetDevice === 'esp32' ? 'ESP32' : 'Arduino'})</h4>
                   <p className='muted' style={{ marginTop: -4 }}>
-                    Relay bytes continuously to the cube controller in real time over {targetDevice === 'esp32' ? 'USB Serial or Wi-Fi WebSockets' : 'USB Serial'}.
+                    Stream live animation frames over {targetDevice === 'esp32' ? 'USB Serial or Wi-Fi' : 'USB Serial'}.
                   </p>
 
                   {targetDevice === 'esp32' && (
@@ -1751,10 +1751,8 @@ export default function App() {
                   ) : (
                     <div className='serial' style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       <label className='muted' style={{ fontSize: 12 }}>
-                        ESP32 IP address (Access Point default is{' '}
-                        <code>192.168.4.1</code>; Station mode prints its
-                        assigned IP to the Serial Monitor after flashing —
-                        this remembers the last IP you connected with):
+                        ESP32 IP address (<code>192.168.4.1</code> for Access
+                        Point mode):
                       </label>
                       <input
                         type='text'
@@ -1814,6 +1812,9 @@ export default function App() {
                   </div>
 
                   <h4>Export Options ({targetDevice === 'esp32' ? 'ESP32' : 'Arduino'})</h4>
+                  <p className='muted' style={{ marginTop: -4 }}>
+                    Keep exports here, full setup and wiring help are in the ? Help Hub.
+                  </p>
                   <button
                     onClick={() =>
                       copyToClipboard(framesToCArray(frames, 'ANIM'))
@@ -1912,8 +1913,8 @@ export default function App() {
                       </div>
                       <p className='muted' style={{ marginTop: -4 }}>
                         {esp32WifiMode === 'sta'
-                          ? 'The ESP32 joins your existing Wi-Fi and prints the IP address it was assigned over Serial — check the Arduino IDE Serial Monitor after flashing and use that IP in the Wi-Fi IP field to the left.'
-                          : 'The ESP32 creates its own network with this name/password. Connect your phone/computer to it, then use 192.168.4.1 in the Wi-Fi IP field to the left.'}
+                          ? 'Station mode: use the IP shown in Serial Monitor.'
+                          : 'Access Point mode: connect to this network, then use 192.168.4.1.'}
                       </p>
                       <button
                         onClick={() =>
@@ -1944,11 +1945,7 @@ export default function App() {
                         ESP32 Self-Hosted Web App Sketch
                       </button>
                       <p className='muted' style={{ marginTop: 4 }}>
-                        This last one serves the whole website from the
-                        ESP32 itself — no separate site to visit. It needs
-                        the built <code>dist/</code> files uploaded to the
-                        board's filesystem too; setup steps are in the
-                        sketch's header comment.
+                        Runs this UI directly on the ESP32 (requires website files upload).
                       </p>
                       <button
                         onClick={async () => {
@@ -1963,14 +1960,8 @@ export default function App() {
                         ⬇ Download Website Files (data/ folder)
                       </button>
                       <p className='muted' style={{ marginTop: 4 }}>
-                        Packages this exact live site — the same{' '}
-                        <code>index.html</code> and JS/CSS bundles you're
-                        using right now — into a .zip. No need to clone the
-                        repo or run <code>npm run build</code> yourself:
-                        just unzip its <strong>contents</strong> (not the
-                        zip file itself) directly into a folder named{' '}
-                        <code>data</code> next to the sketch, then use the
-                        Arduino IDE's "ESP32 Sketch Data Upload" tool.
+                        Packages the current site into a <code>data/</code>{' '}
+                        upload zip.
                       </p>
                       <button
                         onClick={() =>
@@ -1983,20 +1974,18 @@ export default function App() {
                         📄 Download Wiring &amp; Troubleshooting Guide
                       </button>
                       <p className='muted' style={{ marginTop: 4 }}>
-                        Covers the level shifter wiring diagram plus the two
-                        most common gotchas: the ESP32's two separate UARTs
-                        (USB vs. Serial2/TX2), and breadboard ground rails
-                        that aren't bridged top-to-bottom.
+                        Includes wiring map and common ESP32 serial pitfalls.
                       </p>
+                      <button onClick={() => setShowHelp(true)}>
+                        Open Help Hub (?)
+                      </button>
                     </>
                   )}
 
                   <h4 style={{ marginTop: 16 }}>Share</h4>
                   <button onClick={exportVideo}>🎥 Export Video</button>
                   <p className='muted' style={{ marginTop: 4 }}>
-                    Records one full loop of the 3D preview as a .webm
-                    video, for sharing without needing the physical cube on
-                    camera. Briefly takes over playback while recording.
+                    Records one full loop of the 3D preview as a .webm video.
                   </p>
                 </div>
               )}
@@ -2006,7 +1995,28 @@ export default function App() {
       </main>
 
       {toast && <div className='toast'>{toast}</div>}
-      {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
+      {showHelp && (
+        <HelpOverlay
+          onClose={() => setShowHelp(false)}
+          onOpenExport={() => {
+            setActiveTab('export');
+            setShowHelp(false);
+          }}
+          onDownloadWiringGuide={() =>
+            downloadFile(generateWiringGuide(), 'esp32_wiring_guide.txt')
+          }
+          onDownloadSiteFiles={async () => {
+            try {
+              await downloadSiteZip();
+              showToast(
+                'Website files downloaded — extract into a "data" folder next to the sketch',
+              );
+            } catch (e) {
+              showToast(e.message || 'Failed to package website files');
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
