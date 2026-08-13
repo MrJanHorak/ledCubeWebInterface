@@ -9,6 +9,7 @@ import {
   generateESP32LiveRelaySketch,
   generateESP32WiFiRelaySketch,
   generateESP32WebAppSketch,
+  generateWiringGuide,
 } from './exporter';
 
 const sampleFrame = new Array(64).fill(0).map((_, i) => i % 256);
@@ -35,13 +36,14 @@ describe('ESP32 sketch generators', () => {
     const out = generateESP32Sketch('TEST', [sampleFrame]);
     expect(out).toContain('#include <pgmspace.h>');
     expect(out).toContain('const byte TEST[1][64] PROGMEM = {');
-    expect(out).toContain('Serial.begin(38400);');
+    expect(out).toContain('Serial2.begin(38400, SERIAL_8N1, 16, 17);');
   });
 
   it('generates valid ESP32 live relay sketch', () => {
     const out = generateESP32LiveRelaySketch();
     expect(out).toContain('Live Relay Sketch for ESP32');
     expect(out).toContain('Serial.begin(38400);');
+    expect(out).toContain('Serial2.begin(38400, SERIAL_8N1, 16, 17);');
   });
 
   it('generates valid ESP32 Wi-Fi relay sketch (AP mode by default)', () => {
@@ -65,6 +67,17 @@ describe('ESP32 sketch generators', () => {
     expect(out).toContain('const char* password = "hunter2";');
     expect(out).toContain('Serial.println(WiFi.localIP());');
     expect(out).not.toContain('WiFi.softAP');
+  });
+
+  it('generates a wiring & troubleshooting guide covering the two known gotchas', () => {
+    const out = generateWiringGuide();
+    expect(typeof out).toBe('string');
+    expect(out).toContain('Serial2');
+    expect(out).toContain('SN74AHCT125N');
+    expect(out).toContain('breadboard');
+    expect(out.toLowerCase()).toContain('ground rail');
+    expect(out).toContain('0xAD');
+    expect(out).toContain('0xF2');
   });
 });
 

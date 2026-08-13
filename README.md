@@ -106,6 +106,8 @@ That's an **STC15F2K60S2** — an 8051-core microcontroller from STC (a Chinese 
 
 ESP32 microcontrollers offer 32-bit speed, ample flash memory, and built-in Wi-Fi!
 
+**Wiring note**: On the ESP32, the USB port and the cube's data line are two *separate* hardware UARTs. All ESP32 sketches here (`esp32_wifi_relay.ino`, `esp32_live_relay.ino`, `esp32_webapp_relay.ino`, `ANIM_ESP32.ino`) send cube frame data out **`Serial2`** — **TX2 (GPIO17)** — while `Serial` (the USB port) is reserved for Wi-Fi status messages / the WebSerial link to your PC. Wire the cube's data-in pin to TX2 (through a 3.3V→5V level shifter) and the cube's GND to the ESP32's GND, per the manufacturer's manual. If you see garbled binary characters mixed into the Arduino IDE's Serial Monitor, that's `Serial` debug text — it's expected and separate from the TX2 line actually driving the cube.
+
 #### Option A: Wireless Wi-Fi WebSockets Streaming (No USB cable needed!)
 1. In the **Export** tab, select **ESP32 (Wi-Fi/Serial)**.
 2. Choose **Host its own network (Access Point)** or **Join my home Wi-Fi (Station)**, and fill in the name/password fields — for Access Point mode these become the network it creates; for Station mode, these are your existing Wi-Fi's credentials.
@@ -116,6 +118,7 @@ ESP32 microcontrollers offer 32-bit speed, ample flash memory, and built-in Wi-F
    - **Access Point mode**: it creates its own network (default SSID `LED_Cube_AP` / password `ledcube123`, or whatever you set). Connect your PC/phone to that network, then use `192.168.4.1` in the app.
    - **Station mode**: it joins your existing Wi-Fi and prints the IP address it was assigned to the Arduino IDE's Serial Monitor — use that IP in the app instead.
 7. Open the app, go to the **Serial** tab, select **Wi-Fi WebSocket** mode, enter the IP address, click **Connect Wi-Fi**, and click **▶ Start Wi-Fi Stream**!
+   - The IP field remembers the last address you successfully connected with (saved in your browser), and auto-fills itself if the page is being served directly from the ESP32 (Option D below) — in most cases you won't need to retype it every time.
 
 #### Option B: USB WebSerial Streaming on ESP32
 1. Flash **ESP32 USB Relay Sketch** (`esp32_live_relay.ino`) to your ESP32.
@@ -129,8 +132,19 @@ ESP32 microcontrollers offer 32-bit speed, ample flash memory, and built-in Wi-F
 The ESP32 can serve this entire website from its own flash storage, so anyone on the network can point a browser at the ESP32's address and get the full designer UI — no internet connection, no hosting this site anywhere else.
 
 1. In the **Export** tab, set up the same Access Point/Station and name/password fields as Option A, then click **Download ESP32 Self-Hosted Web App Sketch** (`esp32_webapp_relay.ino`).
-2. Follow the setup steps in that file's header comment: install `ESPAsyncWebServer` and its `AsyncTCP` dependency, build this site (`npm run build`), copy the contents of the resulting `dist/` folder into a `data/` folder next to the sketch, and use the Arduino IDE's "ESP32 Sketch Data Upload" tool to flash that folder to the board's filesystem separately from the sketch itself.
-3. **This one is a starting point, not a guaranteed-working final sketch** — it wasn't possible to test it against real hardware while building it. The two things most likely to need adjusting for your exact setup: the ESPAsyncWebServer library's exact API (there have been a couple of maintained forks over time), and your board's partition scheme — many boards' *default* scheme only allocates a small filesystem partition meant for simple config files, not a several-hundred-KB web app; you'll likely need to pick a partition scheme with a larger SPIFFS/LittleFS allocation, and gzip-compressing the `dist/` files before uploading is worth doing both to fit more comfortably and transfer faster.
+2. Click **⬇ Download Website Files (data/ folder)** right below it — this packages the exact live site you're using right now (its `index.html` plus JS/CSS bundles) into a `.zip`, so you don't need to clone the repo or run `npm run build` yourself. Unzip its *contents* (not the zip file itself) into a folder named exactly `data`, placed next to the `.ino` sketch. (If you're running a local dev checkout instead of the deployed site, `npm run build` + copying `dist/`'s contents still works the same way.)
+3. Install `ESPAsyncWebServer` and its `AsyncTCP` dependency in the Arduino Library Manager, then use the Arduino IDE's "ESP32 Sketch Data Upload" tool to flash the `data/` folder to the board's filesystem separately from the sketch itself.
+4. **This one is a starting point, not a guaranteed-working final sketch** — it wasn't possible to test it against real hardware while building it. The two things most likely to need adjusting for your exact setup: the ESPAsyncWebServer library's exact API (there have been a couple of maintained forks over time), and your board's partition scheme — many boards' *default* scheme only allocates a small filesystem partition meant for simple config files, not a several-hundred-KB web app; you'll likely need to pick a partition scheme with a larger SPIFFS/LittleFS allocation, and gzip-compressing the files before uploading is worth doing both to fit more comfortably and transfer faster.
+5. Since the page now loads from the ESP32's own IP, the app's Wi-Fi IP field auto-detects and fills itself in with that same address — no need to type it in separately.
+
+---
+
+## 🔧 ESP32 Hardware Troubleshooting
+
+If you've flashed a sketch and connected over WebSocket/USB but the cube just keeps showing its own factory demo pattern (not your streamed frames), a **📄 Download Wiring & Troubleshooting Guide** button is available right in the app's **Export** tab — it's a plain-text file with the full level-shifter wiring diagram and diagnostic steps, so anyone who lands on the live site (without ever visiting this repo) can still get unstuck. The two most common causes, found while debugging this against real hardware:
+
+1. **Mixing up the ESP32's two UARTs.** `Serial` is the USB port (Wi-Fi status messages, WebSerial link to your PC); `Serial2` (TX2 = GPIO17, RX2 = GPIO16) is the separate hardware UART that actually drives the cube through a level shifter. Every sketch this site generates already keeps these separate — but if you see garbled binary characters mixed into the Arduino IDE's Serial Monitor, that's a sign cube data ended up on the wrong UART.
+2. **Breadboard ground rails that aren't bridged.** Most full-size breadboards have the top and bottom power rail strips as two *separate* electrical nets — they don't connect to each other automatically. If the ESP32's GND, the level shifter's GND pin, and the cube's GND wire aren't all on the exact same rail (or bridged together with a jumper), you can get silent failures even though each individual connection looks correct with a meter. This is easy to miss and was the actual root cause the one time this got fully debugged against real hardware — always double check it first if voltage/continuity checks near the chip otherwise look fine.
 
 ---
 

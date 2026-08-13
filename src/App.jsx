@@ -11,6 +11,7 @@ import {
   writeToWebSocket,
   closeWebSocket,
 } from './utils/serial';
+import { downloadSiteZip } from './utils/siteBundle';
 import {
   framesToCArray,
   generateHFile,
@@ -23,6 +24,7 @@ import {
   generateESP32LiveRelaySketch,
   generateESP32WiFiRelaySketch,
   generateESP32WebAppSketch,
+  generateWiringGuide,
 } from './utils/exporter';
 import {
   mirrorX,
@@ -123,9 +125,30 @@ export default function App() {
     return auto && typeof auto.delayMs === 'number' ? auto.delayMs : 300;
   });
   const [serialPort, setSerialPort] = useState(null);
-  const [targetDevice, setTargetDevice] = useState('arduino'); // 'arduino' | 'esp32'
+  const [targetDevice, setTargetDevice] = useState('esp32'); // 'arduino' | 'esp32'
   const [connectionMode, setConnectionMode] = useState('serial'); // 'serial' | 'wifi'
-  const [wifiIp, setWifiIp] = useState('192.168.4.1');
+  // Auto-fill the ESP32's IP so users don't have to hunt for it every
+  // time: if this page is itself being served from the ESP32 (the
+  // self-hosted web app sketch), the browser's own URL already IS the
+  // ESP32's address -- reuse it directly. Otherwise, fall back to
+  // whatever IP the user successfully connected with last time (saved in
+  // localStorage), since Station-mode IPs tend to stay the same across
+  // reboots on most home routers.
+  const [wifiIp, setWifiIp] = useState(() => {
+    if (typeof window !== 'undefined' && window.location) {
+      const host = window.location.hostname;
+      const isPrivateIp =
+        /^192\.168\.\d{1,3}\.\d{1,3}$/.test(host) ||
+        /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) ||
+        /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(host);
+      if (isPrivateIp) return host;
+    }
+    try {
+      const saved = localStorage.getItem('ledcube_wifi_ip');
+      if (saved) return saved;
+    } catch (e) {}
+    return '192.168.4.1';
+  });
   const [esp32WifiMode, setEsp32WifiMode] = useState('ap'); // 'ap' | 'sta'
   const [esp32Ssid, setEsp32Ssid] = useState('LED_Cube_AP');
   const [esp32Password, setEsp32Password] = useState('ledcube123');
@@ -939,6 +962,9 @@ export default function App() {
       const ws = await openWebSocket(url);
       setWebSocket(ws);
       setConnecting(false);
+      try {
+        localStorage.setItem('ledcube_wifi_ip', wifiIp);
+      } catch (e) {}
       showToast('Connected to ESP32 Wi-Fi WebSocket');
     } catch (e) {
       setConnecting(false);
@@ -1724,6 +1750,12 @@ export default function App() {
                     </div>
                   ) : (
                     <div className='serial' style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <label className='muted' style={{ fontSize: 12 }}>
+                        ESP32 IP address (Access Point default is{' '}
+                        <code>192.168.4.1</code>; Station mode prints its
+                        assigned IP to the Serial Monitor after flashing —
+                        this remembers the last IP you connected with):
+                      </label>
                       <input
                         type='text'
                         value={wifiIp}
@@ -1917,6 +1949,44 @@ export default function App() {
                         the built <code>dist/</code> files uploaded to the
                         board's filesystem too; setup steps are in the
                         sketch's header comment.
+                      </p>
+                      <button
+                        onClick={async () => {
+                          try {
+                            await downloadSiteZip();
+                            showToast('Website files downloaded — extract into a "data" folder next to the sketch');
+                          } catch (e) {
+                            showToast(e.message || 'Failed to package website files');
+                          }
+                        }}
+                      >
+                        ⬇ Download Website Files (data/ folder)
+                      </button>
+                      <p className='muted' style={{ marginTop: 4 }}>
+                        Packages this exact live site — the same{' '}
+                        <code>index.html</code> and JS/CSS bundles you're
+                        using right now — into a .zip. No need to clone the
+                        repo or run <code>npm run build</code> yourself:
+                        just unzip its <strong>contents</strong> (not the
+                        zip file itself) directly into a folder named{' '}
+                        <code>data</code> next to the sketch, then use the
+                        Arduino IDE's "ESP32 Sketch Data Upload" tool.
+                      </p>
+                      <button
+                        onClick={() =>
+                          downloadFile(
+                            generateWiringGuide(),
+                            'esp32_wiring_guide.txt',
+                          )
+                        }
+                      >
+                        📄 Download Wiring &amp; Troubleshooting Guide
+                      </button>
+                      <p className='muted' style={{ marginTop: 4 }}>
+                        Covers the level shifter wiring diagram plus the two
+                        most common gotchas: the ESP32's two separate UARTs
+                        (USB vs. Serial2/TX2), and breadboard ground rails
+                        that aren't bridged top-to-bottom.
                       </p>
                     </>
                   )}

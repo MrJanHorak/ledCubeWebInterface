@@ -105,6 +105,11 @@ export function generateESP32Sketch(name, frames) {
 
   return `// Generated ESP32 sketch for ${name}
 // Flashes animation into ESP32 flash memory (PROGMEM)
+//
+// Cube data goes out Serial2's hardware UART (TX2 = GPIO17, RX2 = GPIO16 on
+// most boards) through a level shifter to the cube's data pin -- NOT the
+// USB port. Serial (USB) and Serial2 (TX2/RX2) are separate hardware
+// UARTs; writing to Serial here would never reach a cube wired to TX2.
 
 #include <Arduino.h>
 #include <pgmspace.h>
@@ -113,20 +118,20 @@ ${arr}
 
 // Send one frame stored in PROGMEM (framePtr points to 64 bytes)
 void sendFrameFromPROGMEM(const uint8_t *framePtr) {
-  Serial.write(0xF2);
+  Serial2.write(0xF2);
   for (int i = 0; i < 64; i++) {
     uint8_t b = pgm_read_byte(framePtr + i);
-    Serial.write(b);
+    Serial2.write(b);
   }
 }
 
 void setup() {
-  // Initialize Hardware Serial for USB / Cube connection at 38400 baud
-  Serial.begin(38400);
+  // Initialize Hardware Serial2 for Cube connection at 38400 baud
+  Serial2.begin(38400, SERIAL_8N1, 16, 17);
   delay(500);
   // Send open command handshake (0xAD)
   for (int i = 0; i < 70; i++) {
-    Serial.write(0xAD);
+    Serial2.write(0xAD);
   }
   delay(200);
 }
@@ -144,19 +149,27 @@ void loop() {
 export function generateESP32LiveRelaySketch() {
   return `// Live Relay Sketch for ESP32 (USB WebSerial to LED Cube)
 //
-// Relays bytes received over USB Serial straight to hardware UART or USB Serial output
-// for real-time 8x8x8 LED cube frame streaming.
+// Relays bytes received over USB Serial (the WebSerial connection to the
+// website) straight out Serial2's hardware UART (TX2 = GPIO17, RX2 = GPIO16
+// on most boards) to the LED Cube controller, for real-time 8x8x8 LED cube
+// frame streaming.
+//
+// IMPORTANT: the cube's data pin must be wired to TX2 (through a level
+// shifter to 5V, with a shared GND) -- NOT to the USB port. Serial (USB)
+// and Serial2 (TX2/RX2) are separate hardware UARTs on the ESP32; bytes
+// written to Serial only go back out the USB cable, they never reach TX2.
 
 #include <Arduino.h>
 
 void setup() {
   Serial.begin(38400);
+  Serial2.begin(38400, SERIAL_8N1, 16, 17); // RX2=GPIO16, TX2=GPIO17
 }
 
 void loop() {
   if (Serial.available() > 0) {
     uint8_t b = Serial.read();
-    Serial.write(b);
+    Serial2.write(b);
   }
 }
 `;
@@ -232,7 +245,7 @@ WebSocketsServer webSocket(81);
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
   if (type == WStype_BIN) {
     for (size_t i = 0; i < length; i++) {
-      Serial.write(payload[i]);
+      Serial2.write(payload[i]);
     }
   } else if (type == WStype_TEXT) {
     if (length >= 4 && payload[0] == 'P' && payload[1] == 'I' && payload[2] == 'N' && payload[3] == 'G') {
@@ -243,6 +256,10 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 
 void setup() {
   Serial.begin(38400);
+  // Cube data goes out Serial2's hardware UART (TX2 = GPIO17, RX2 = GPIO16
+  // on most boards) through a level shifter to the cube's data pin -- NOT
+  // over the USB port, which is what "Serial" is.
+  Serial2.begin(38400, SERIAL_8N1, 16, 17);
 
   if (!LittleFS.begin(true)) {
     Serial.println("LittleFS mount failed -- did you upload the data/ folder? See setup notes above.");
@@ -312,7 +329,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
   if (type == WStype_BIN) {
     // Binary WebSocket message containing cube frame data
     for (size_t i = 0; i < length; i++) {
-      Serial.write(payload[i]);
+      Serial2.write(payload[i]);
     }
   } else if (type == WStype_TEXT) {
     if (length >= 4 && payload[0] == 'P' && payload[1] == 'I' && payload[2] == 'N' && payload[3] == 'G') {
@@ -323,6 +340,12 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 
 void setup() {
   Serial.begin(38400);
+  // Cube data goes out Serial2's hardware UART (TX2 = GPIO17, RX2 = GPIO16
+  // on most boards) through a level shifter to the cube's data pin -- NOT
+  // over the USB port, which is what "Serial" is. Mixing the two on one
+  // UART is what causes garbled bytes in the Serial Monitor and nothing
+  // reaching the cube.
+  Serial2.begin(38400, SERIAL_8N1, 16, 17);
 
 ${wifiSetup}
 
@@ -334,6 +357,121 @@ ${wifiSetup}
 void loop() {
   webSocket.loop();
 }
+`;
+}
+
+// Plain-text wiring & troubleshooting guide, downloadable straight from the
+// live site -- so anyone who lands here without ever visiting the GitHub
+// repo (e.g. shared a link, found it some other way) still gets the full
+// hardware setup and the fixes for the gotchas that came up building this:
+// the ESP32's two separate UARTs, and breadboard power-rail splits.
+export function generateWiringGuide() {
+  return `LED CUBE DESIGNER -- ESP32 WIRING & TROUBLESHOOTING GUIDE
+============================================================
+
+This guide covers wiring an ESP32 to an 8x8x8 LED cube that has its own
+onboard driver controller (the kind of cube where a 4-pin connector runs
+to the cube, and the cube does its own LED multiplexing in firmware you
+don't touch). If your cube is instead pin-driven directly by the
+microcontroller (shift registers, bit-banged rows/columns), this guide
+does not apply -- you need different sketches entirely.
+
+------------------------------------------------------------
+1. WHY YOU NEED A LEVEL SHIFTER
+------------------------------------------------------------
+The ESP32 runs its logic at 3.3V. Many of these cube controllers expect a
+full 5V logic signal on their data-in pin. Wiring the ESP32 straight to
+the cube can be unreliable or not work at all -- use a 5V level shifter,
+for example an SN74AHCT125N (a common, cheap, non-inverting buffer chip).
+
+------------------------------------------------------------
+2. THE CUBE'S CONNECTOR
+------------------------------------------------------------
+Check your cube's own manual/photos for the exact pinout, but on this
+style of cube, the 4-pin connector typically only needs 2 of its 4 pins:
+  - Far-left pin  = data in (from the level shifter's output)
+  - Far-right pin = GND
+The middle two pins are commonly unused for this style of board.
+
+The cube also needs its own separate power adapter running at the same
+time as the ESP32 -- the 4-pin connector is signal/ground only, it does
+not power the cube.
+
+------------------------------------------------------------
+3. MASTER WIRING MAP (ESP32 + SN74AHCT125N level shifter + cube)
+------------------------------------------------------------
+Power & Ground:
+  ESP32 GND              -> Breadboard Ground Rail
+  SN74AHCT125N Pin 7 (GND)   -> Breadboard Ground Rail
+  SN74AHCT125N Pin 1 (1OE)   -> Breadboard Ground Rail (forces output enabled;
+                                 this pin is active-LOW enable)
+  ESP32 VIN (5V)         -> SN74AHCT125N Pin 14 (VCC)
+
+Data path (3.3V in, 5V out):
+  ESP32 TX2 (GPIO17)     -> SN74AHCT125N Pin 2 (1A)
+  SN74AHCT125N Pin 3 (1Y)    -> Cube's far-left pin (data in)
+
+Completing the circuit:
+  Breadboard Ground Rail -> Cube's far-right pin (GND)
+
+------------------------------------------------------------
+4. TWO GOTCHAS THAT CAUSE "NOTHING HAPPENS, CUBE SHOWS ITS OWN
+   FACTORY DEMO PATTERN" -- CHECK THESE FIRST
+------------------------------------------------------------
+
+A) The ESP32 has TWO separate hardware UARTs -- don't mix them up.
+   "Serial" is the USB port (used for Wi-Fi status messages / talking to
+   your PC). "Serial2" is the separate hardware UART on TX2 (GPIO17) /
+   RX2 (GPIO16) that actually drives the cube through the level shifter.
+   All the sketches this site generates already send cube frame data out
+   Serial2 and keep Serial for USB debug only -- if you're hand-editing a
+   sketch, make sure any code that talks to the cube writes to Serial2,
+   not Serial. A telltale symptom of this mistake: the Arduino IDE's
+   Serial Monitor shows garbled/binary-looking characters mixed into the
+   text -- that's cube frame data being sent to the wrong UART.
+
+B) Breadboard power rails are usually NOT bridged top-to-bottom.
+   Most full-size breadboards have the top rail strip and the bottom rail
+   strip as two electrically SEPARATE strips -- plugging into both and
+   assuming they're the same net is a very easy mistake to make. If the
+   ESP32's GND ends up on one rail while the level shifter's GND (pin 7)
+   or the cube's GND wire ends up on the other, you can get inconsistent
+   behavior even though each individual wire looks fine, and simple
+   continuity/voltage checks near the chip can look "correct" without
+   catching it. Fix: run one jumper wire directly bridging the top and
+   bottom ground rails, or better, plug every ground wire (ESP32 GND,
+   level shifter pin 1 + pin 7, and the cube's GND pin) into the exact
+   same rail strip.
+
+------------------------------------------------------------
+5. STEP-BY-STEP DIAGNOSIS IF THE CUBE STILL WON'T RESPOND
+------------------------------------------------------------
+1. Confirm data is reaching the ESP32 at all: add a temporary Serial.print
+   byte counter inside your WebSocket/relay handler to confirm bytes are
+   arriving from the website before you worry about anything downstream.
+2. Confirm the ESP32 is actually sending on Serial2/TX2: with a multimeter
+   in DC voltage mode, measure the level shifter's input pin (1A, pin 2)
+   against GND while streaming -- a UART actively sending data will show
+   the voltage flickering/jumping, not sitting at a steady clean value.
+3. Confirm the level shifter's output reaches the cube: same flicker test
+   on the output pin (1Y, pin 3).
+4. Confirm power and enable to the chip: VCC (pin 14) to GND (pin 7)
+   should read about 5V; OE (pin 1) to GND should read about 0V.
+5. If everything above checks out but the cube still shows its own
+   factory demo pattern, re-check every ground connection is on the exact
+   same rail (see gotcha B above) -- this is the single most common
+   remaining cause.
+
+------------------------------------------------------------
+6. SERIAL PROTOCOL REFERENCE (for the curious / for custom sketches)
+------------------------------------------------------------
+38,400 baud, 8N1.
+  - Handshake: 70 repeated 0xAD bytes, sent once when streaming begins.
+  - Each frame: one 0xF2 header byte, then 64 raw data bytes (one byte per
+    cube column; bit 0/LSB = bottom layer, bit 7/MSB = top layer).
+  - Frames repeat continuously for as long as you're streaming. If the
+    stream stops, the cube's own controller falls back to its built-in
+    demo pattern automatically -- this is normal, not an error.
 `;
 }
 
