@@ -78,4 +78,27 @@ describe('collectAssetUrls', () => {
     const doc = makeFakeDoc({});
     expect(collectAssetUrls(doc)).toEqual([]);
   });
+
+  it('excludes cross-origin URLs like Google Fonts / Google Analytics', () => {
+    const doc = makeFakeDoc({
+      'script[src]': [
+        makeFakeElement({ src: '/assets/index-abc.js' }),
+        makeFakeElement({
+          src: 'https://www.googletagmanager.com/gtag/js?id=G-XXXX',
+        }),
+      ],
+      'link[rel="stylesheet"]': [
+        makeFakeElement({ rel: 'stylesheet', href: '/assets/index-abc.css' }),
+        makeFakeElement({
+          rel: 'stylesheet',
+          href: 'https://fonts.googleapis.com/css2?family=Inter',
+        }),
+      ],
+    });
+    const urls = collectAssetUrls(doc, 'https://example.com');
+    expect(urls).toContain('/assets/index-abc.js');
+    expect(urls).toContain('/assets/index-abc.css');
+    expect(urls).not.toContain('https://www.googletagmanager.com/gtag/js?id=G-XXXX');
+    expect(urls).not.toContain('https://fonts.googleapis.com/css2?family=Inter');
+  });
 });

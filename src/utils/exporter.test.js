@@ -218,6 +218,16 @@ describe('generateESP32WebAppSketch', () => {
     expect(out).toContain('WiFi.softAP(ssid, password);');
   });
 
+  it('sends the 0xAD open-communication handshake once at boot', () => {
+    // The cube ignores 0xF2 frame packets (including auto-replayed NVS
+    // slots) until it has received this handshake -- without it, streamed
+    // frames are silently dropped by the cube even though the sketch
+    // receives and parses them correctly.
+    const out = generateESP32WebAppSketch();
+    const setupBody = out.slice(out.indexOf('void setup()'), out.indexOf('void loop()'));
+    expect(setupBody).toMatch(/for\s*\(.*i.*<\s*70.*\)\s*Serial2\.write\(0xAD\);/);
+  });
+
   it('supports STA mode and prints the assigned IP', () => {
     const out = generateESP32WebAppSketch({
       mode: 'sta',

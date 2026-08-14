@@ -190,8 +190,9 @@ Note: 5 V logic from Arduino must be level-shifted
                   <p className='guide-card-title'>🖥️ Self-Hosted — cube serves the app</p>
                   <ol className='step-list'>
                     <li>Export tab → ESP32 → <strong>Self-Hosted App Sketch</strong> → flash it.</li>
-                    <li>Export tab → <strong>Website Files</strong> → extract into a <code>data/</code> folder beside the sketch.</li>
-                    <li>Arduino IDE → <em>Sketch → Upload SPIFFS / LittleFS Data</em>.</li>
+                    <li>Before compiling, install these in the Arduino IDE (<em>Sketch → Include Library → Manage Libraries</em>): <strong>WiFiManager</strong> (by tzapu), <strong>ESPAsyncWebServer</strong> + its <strong>AsyncTCP</strong> dependency (use the <strong>ESP32Async</strong> org forks, not the old unmaintained <code>me-no-dev</code> originals), and <strong>WebSockets</strong> (by Markus Sattler). Missing any one of these causes a <code>fatal error: ... No such file or directory</code> compile error.</li>
+                    <li>Export tab → <strong>Website Files</strong> → extract into a <code>data/</code> folder beside the sketch. Generate this zip from the <strong>deployed site</strong> or a production build only — running it from the Vite <code>npm run dev</code> server packages dev-only files (an <code>@vite</code> folder, <code>src/main.jsx</code>) that won't run standalone and are usually too big to fit. Only same-origin assets are packaged; third-party URLs (Google Fonts/Analytics) are skipped since the browser fetches those directly regardless of what's on the ESP32.</li>
+                    <li>Arduino IDE → <em>Sketch → Upload SPIFFS / LittleFS Data</em>. If it fails with <code>File system is full</code>, pick a partition scheme with more SPIFFS/LittleFS space (<em>Tools → Partition Scheme</em>) or gzip-compress the files in <code>data/</code> first.</li>
                     <li>Same first-boot Wi-Fi setup as above.</li>
                     <li>Open <code>ledcube.local</code> — the cube serves the full app locally.</li>
                   </ol>
@@ -204,6 +205,7 @@ Note: 5 V logic from Arduino must be level-shifted
                 <li>When the URL ends in <code>.local</code> the app switches to <strong>Dual Mode</strong>.</li>
                 <li>The <strong>Library</strong> tab replaces Connect Serial — no manual IP entry needed.</li>
                 <li>To reset Wi-Fi credentials: hold the BOOT button for 3 seconds on power-up.</li>
+                <li><strong>Use the Library tab to send frames, not the Tools tab.</strong> Tools tab's "Start Wi-Fi Stream" speaks the older frame-by-frame relay protocol (for the Wi-Fi/USB Relay sketches) — the self-hosted app sketch only understands the Library tab's Live Stream / Slot 1 / Slot 2 commands. Slot 1/2 also persist to flash, so the cube keeps playing that animation on power-up even with no browser connected.</li>
               </ul>
 
               <div className='help-actions'>
@@ -232,8 +234,13 @@ Note: 5 V logic from Arduino must be level-shifted
                     <li>Hotspot not appearing → hold BOOT button during power-on.</li>
                     <li><code>ledcube.local</code> not found → try the IP shown in Serial Monitor.</li>
                     <li>Library tab missing → URL must contain <code>.local</code>.</li>
+                    <li>Cube not lighting up / nothing streams on <code>ledcube.local</code> → make sure you're using the <strong>Library</strong> tab's Live Stream/Slot buttons, not the <strong>Tools</strong> tab's "Start Wi-Fi Stream" — that one uses a different protocol meant for the Wi-Fi/USB Relay sketches, and the self-hosted app sketch silently ignores it.</li>
                     <li>SPIFFS upload fails → folder must be named exactly <code>data</code>.</li>
                     <li>Upload option missing → install the LittleFS upload plugin for your IDE.</li>
+                    <li><code>fatal error: WiFiManager.h: No such file or directory</code> (or similar for <code>ESPAsyncWebServer.h</code> / <code>AsyncTCP.h</code> / <code>WebSocketsServer.h</code>) → that library isn't installed yet. Go to <em>Sketch → Include Library → Manage Libraries</em>, search for the missing library, and install it (WiFiManager by tzapu, ESPAsyncWebServer + AsyncTCP from the ESP32Async org, WebSockets by Markus Sattler), then recompile.</li>
+                    <li><code>error: 'mbedtls_md5_starts_ret' was not declared</code> in <code>WebAuthentication.cpp</code>, or <code>Multiple libraries were found for "AsyncTCP.h" / "ESPAsyncWebServer.h"</code> → an old, unmaintained copy of these libraries (often the original <code>me-no-dev</code> versions, sometimes named <code>Async_TCP</code> / <code>ESP_Async_WebServer</code>) is installed alongside a newer one and won't compile against current ESP32 core mbedtls APIs. Open your Arduino <code>libraries</code> folder and delete the old/duplicate <code>AsyncTCP</code>, <code>Async_TCP</code>, <code>ESPAsyncWebServer</code>, and <code>ESP_Async_WebServer</code> folders, keeping only the <strong>ESP32Async</strong> versions, then restart the IDE and recompile.</li>
+                    <li><code>lfs_write error(-28): File system is full.</code> during data upload → your <code>data/</code> folder is bigger than the LittleFS partition. Check for an <code>@vite</code> folder or <code>src/main.jsx</code> (means the zip came from <code>npm run dev</code> — regenerate it from the deployed site or a <code>npm run build</code> output) and for stray <code>/css2</code> or <code>/gtag/js</code> files from an older export (dead weight — safe to delete, this has been fixed in newer exports). If it's already a clean production build and still too big, pick a larger partition scheme (<em>Tools → Partition Scheme</em>) and/or gzip-compress the files before uploading.</li>
+                    <li><code>Could not open COM5 ... the port is busy or doesn't exist</code> / <code>PermissionError(13, 'Access is denied.')</code> during upload → another program has the serial port open. Close the Arduino IDE's Serial Monitor and any other terminal/serial app, then retry; unplug/replug the board if it persists.</li>
                   </ul>
                 </div>
               </div>

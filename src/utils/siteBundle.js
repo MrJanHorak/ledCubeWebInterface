@@ -22,11 +22,29 @@ export function assetPathFromUrl(url, origin) {
   return path.replace(/^\/+/, '');
 }
 
+// True when a URL is same-origin (or origin-less/relative) relative to the
+// given page origin -- used to skip third-party CDN assets (Google Fonts,
+// Google Analytics, etc.) that the ESP32 self-hosted bundle should never
+// try to embed: the HTML keeps their absolute https:// URLs unchanged, so
+// the browser fetches them straight from the real internet regardless of
+// what's in the data/ folder. Packaging them just wastes flash space (and
+// was the direct cause of "File system is full" LittleFS upload errors).
+function isSameOrigin(url, origin) {
+  try {
+    const base = origin || 'http://localhost/';
+    const u = new URL(url, base);
+    return u.origin === new URL(base).origin;
+  } catch (e) {
+    return true; // unparseable / relative-looking strings are treated as local
+  }
+}
+
 // Scans the live document for the asset URLs it actually loaded (script
 // bundles, stylesheets, icons, manifest) -- this naturally stays in sync
 // with whatever the current Vite build produced, without needing to know
-// hashed filenames ahead of time.
-export function collectAssetUrls(doc) {
+// hashed filenames ahead of time. Cross-origin URLs (third-party CDNs) are
+// excluded -- see isSameOrigin above.
+export function collectAssetUrls(doc, origin) {
   const urls = new Set();
   const selectors = [
     'script[src]',
@@ -40,7 +58,7 @@ export function collectAssetUrls(doc) {
     doc.querySelectorAll(sel).forEach((el) => {
       const attr = el.hasAttribute('src') ? 'src' : 'href';
       const val = el.getAttribute(attr);
-      if (val) urls.add(val);
+      if (val && isSameOrigin(val, origin)) urls.add(val);
     });
   });
   return Array.from(urls);
@@ -69,7 +87,7 @@ export async function downloadSiteZip({
   }
   zip.file('index.html', await indexRes.text());
 
-  const assetUrls = collectAssetUrls(doc);
+  const assetUrls = collectAssetUrls(doc, origin);
   for (const url of assetUrls) {
     const absUrl = new URL(url, origin).toString();
     const res = await win.fetch(absUrl);

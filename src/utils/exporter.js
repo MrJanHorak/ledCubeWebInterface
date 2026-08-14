@@ -238,6 +238,12 @@ void setup() {
   Serial.begin(38400);
   Serial2.begin(38400, SERIAL_8N1, 16, 17);
 
+  // Send the open-communication handshake once at boot -- the cube ignores
+  // 0xF2 frame packets until it has received this, so playback (including
+  // slots auto-loaded from NVS below) would otherwise silently do nothing.
+  for (int i = 0; i < 70; i++) Serial2.write(0xAD);
+  delay(200);
+
   if (!LittleFS.begin(true)) {
     Serial.println("LittleFS mount failed — did you upload the data/ folder? See setup step 4.");
     return;

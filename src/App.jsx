@@ -1843,7 +1843,7 @@ export default function App() {
                           Disconnect
                         </button>
                       </div>
-                      {!streaming ? (
+                      {!streaming && !isESP32Mode ? (
                         <button
                           className='btn-primary'
                           onClick={startStreaming}
@@ -1851,10 +1851,14 @@ export default function App() {
                         >
                           ▶ Start Wi-Fi Stream
                         </button>
-                      ) : (
+                      ) : streaming ? (
                         <button className='btn-danger' onClick={stopStreaming}>
                           ⏹ Stop Streaming
                         </button>
+                      ) : (
+                        <div style={{ fontSize: '0.82em', color: 'var(--text-muted)' }}>
+                          This live-frame-by-frame streamer talks to the <strong>Wi-Fi Relay</strong> / <strong>USB Relay</strong> sketches only. Since you're connected to the self-hosted <code>ledcube.local</code> app, use the <strong>Library</strong> tab instead — it sends frames using the protocol this sketch understands.
+                        </div>
                       )}
                     </div>
                   )}
