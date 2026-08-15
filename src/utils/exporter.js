@@ -240,7 +240,7 @@ void setup() {
 
   // Send the open-communication handshake once at boot -- the cube ignores
   // 0xF2 frame packets until it has received this, so playback (including
-  // slots auto-loaded from NVS below) would otherwise silently do nothing.
+  // slots auto-loaded from LittleFS below) would otherwise silently do nothing.
   for (int i = 0; i < 70; i++) Serial2.write(0xAD);
   delay(200);
 
@@ -264,7 +264,7 @@ void setup() {
     }
   }
 
-  loadSlotsFromNVS();
+  loadSlotsFromStorage();
 
   WiFiManager wm;
   wm.setConfigPortalTimeout(180);
@@ -301,25 +301,29 @@ void loop() {
 //
 //   Byte 0  : command flag
 //               0x01 = live stream  -- play the payload frames in a loop
-//               0x02 = save Slot 1  -- persist to NVS, play on next boot
+//               0x02 = save Slot 1  -- persist to LittleFS, play on next boot
 //               0x03 = save Slot 2  -- same, second slot
 //   Bytes 1+ : packed frame data, 64 bytes per frame (one byte per column,
 //              each byte encodes the 8 Z-layer bits for that column).
 //              Total length = 1 + (frameCount * 64).
 //
-// The slot data is stored in NVS (Preferences) so it survives power cycles.
+// The slot data is stored as a file on LittleFS (/slot1.bin, /slot2.bin) so
+// it survives power cycles. LittleFS shares the same multi-hundred-KB to
+// multi-MB flash partition as the website files, so long scrolling-text
+// animations (which need many frames to scroll the full message across the
+// display) have plenty of room -- unlike NVS (ESP32 Preferences), whose
+// default partition is only ~20 KB total and would silently fail to save
+// once the frame data grew past that.
 // On boot, if no live-stream has arrived yet, the last saved slot plays.
 // ---------------------------------------------------------------------------
 const DUAL_MODE_HANDLER_C = `
-#include <Preferences.h>
+#include <LittleFS.h>
 
 #define CMD_STREAM  0x01
 #define CMD_SLOT1   0x02
 #define CMD_SLOT2   0x03
 #define FRAME_BYTES 64
-#define MAX_FRAMES  512   // 512 * 64 = 32 KB -- fits comfortably in heap
-
-Preferences prefs;
+#define MAX_FRAMES  4096  // 4096 * 64 = 256 KB -- LittleFS has room; heap is the real ceiling now
 
 // Live-stream buffer (heap allocated, replaced on each CMD_STREAM message)
 uint8_t* liveFrames    = nullptr;
@@ -327,7 +331,7 @@ int      liveFrameCount = 0;
 int      liveFrameIdx   = 0;
 bool     liveMode       = false;
 
-// Slot buffers (loaded from NVS on boot, replaced by CMD_SLOT1/2 messages)
+// Slot buffers (loaded from LittleFS on boot, replaced by CMD_SLOT1/2 messages)
 uint8_t* slot1Frames    = nullptr;
 int      slot1FrameCount = 0;
 uint8_t* slot2Frames    = nullptr;
@@ -337,30 +341,46 @@ int      slot2FrameCount = 0;
 int activeSlot = 1;
 int slotFrameIdx = 0;
 
-// ---- NVS helpers -----------------------------------------------------------
+// ---- LittleFS slot storage helpers ------------------------------------------
+//
+// Each slot is a single file: a 4-byte little-endian frame count, followed
+// by frameCount * FRAME_BYTES of raw frame data. Using files instead of NVS
+// (Preferences) removes the ~20 KB NVS partition ceiling -- LittleFS shares
+// the much larger flash partition already used for the website files, so
+// long scrolling-text animations (many frames) save reliably.
 
-void saveSlotToNVS(int slot, const uint8_t* data, int frameCount) {
-  prefs.begin("ledcube", false);
-  char key[16];
-  snprintf(key, sizeof(key), "slot%d_fc", slot);
-  prefs.putInt(key, frameCount);
-  snprintf(key, sizeof(key), "slot%d_data", slot);
-  prefs.putBytes(key, data, (size_t)frameCount * FRAME_BYTES);
-  prefs.end();
+void slotFilePath(int slot, char* out, size_t outLen) {
+  snprintf(out, outLen, "/slot%d.bin", slot);
 }
 
-uint8_t* loadSlotFromNVS(int slot, int* outFrameCount) {
-  prefs.begin("ledcube", true);
-  char key[16];
-  snprintf(key, sizeof(key), "slot%d_fc", slot);
-  int fc = prefs.getInt(key, 0);
-  if (fc <= 0 || fc > MAX_FRAMES) { prefs.end(); *outFrameCount = 0; return nullptr; }
+void saveSlotToFile(int slot, const uint8_t* data, int frameCount) {
+  char path[16];
+  slotFilePath(slot, path, sizeof(path));
+  File f = LittleFS.open(path, "w");
+  if (!f) { Serial.printf("Failed to open %s for writing\\n", path); return; }
+  uint32_t fc = (uint32_t)frameCount;
+  f.write((const uint8_t*)&fc, sizeof(fc));
+  f.write(data, (size_t)frameCount * FRAME_BYTES);
+  f.close();
+}
+
+uint8_t* loadSlotFromFile(int slot, int* outFrameCount) {
+  char path[16];
+  slotFilePath(slot, path, sizeof(path));
+  *outFrameCount = 0;
+  if (!LittleFS.exists(path)) return nullptr;
+  File f = LittleFS.open(path, "r");
+  if (!f) return nullptr;
+  uint32_t fc = 0;
+  if (f.read((uint8_t*)&fc, sizeof(fc)) != sizeof(fc) || fc == 0 || fc > MAX_FRAMES) {
+    f.close();
+    return nullptr;
+  }
   uint8_t* buf = (uint8_t*)malloc((size_t)fc * FRAME_BYTES);
-  if (!buf) { prefs.end(); *outFrameCount = 0; return nullptr; }
-  snprintf(key, sizeof(key), "slot%d_data", slot);
-  prefs.getBytes(key, buf, (size_t)fc * FRAME_BYTES);
-  prefs.end();
-  *outFrameCount = fc;
+  if (!buf) { f.close(); return nullptr; }
+  f.read(buf, (size_t)fc * FRAME_BYTES);
+  f.close();
+  *outFrameCount = (int)fc;
   return buf;
 }
 
@@ -393,7 +413,7 @@ void handleDualModeMessage(uint8_t* payload, size_t length) {
     activeSlot      = 1;
     slotFrameIdx    = 0;
     liveMode        = false;
-    saveSlotToNVS(1, buf, frameCount);
+    saveSlotToFile(1, buf, frameCount);
     Serial.printf("Saved %d frame(s) to Slot 1\\n", frameCount);
   } else if (cmd == CMD_SLOT2) {
     free(slot2Frames);
@@ -402,7 +422,7 @@ void handleDualModeMessage(uint8_t* payload, size_t length) {
     activeSlot      = 2;
     slotFrameIdx    = 0;
     liveMode        = false;
-    saveSlotToNVS(2, buf, frameCount);
+    saveSlotToFile(2, buf, frameCount);
     Serial.printf("Saved %d frame(s) to Slot 2\\n", frameCount);
   } else {
     free(buf); // unknown command
@@ -455,10 +475,10 @@ void playNextFrame() {
   *idx = (*idx + 1) % count;
 }
 
-void loadSlotsFromNVS() {
-  slot1Frames = loadSlotFromNVS(1, &slot1FrameCount);
+void loadSlotsFromStorage() {
+  slot1Frames = loadSlotFromFile(1, &slot1FrameCount);
   if (slot1FrameCount > 0) Serial.printf("Slot 1 loaded: %d frame(s)\\n", slot1FrameCount);
-  slot2Frames = loadSlotFromNVS(2, &slot2FrameCount);
+  slot2Frames = loadSlotFromFile(2, &slot2FrameCount);
   if (slot2FrameCount > 0) Serial.printf("Slot 2 loaded: %d frame(s)\\n", slot2FrameCount);
 }
 `;
@@ -490,6 +510,7 @@ export function generateESP32WiFiRelaySketch() {
 #include <WiFiManager.h>
 #include <WebSocketsServer.h>
 #include <ESPmDNS.h>
+#include <LittleFS.h>
 ${DUAL_MODE_HANDLER_C}
 
 #define MDNS_HOSTNAME "ledcube"
@@ -513,6 +534,10 @@ void setup() {
   // on most boards) through a level shifter to the cube's data pin.
   Serial2.begin(38400, SERIAL_8N1, 16, 17);
 
+  if (!LittleFS.begin(true)) {
+    Serial.println("LittleFS mount failed — saved slots will not persist.");
+  }
+
   // Hold RESET_PIN low for 3 s on boot to wipe saved Wi-Fi credentials
   pinMode(RESET_PIN, INPUT_PULLUP);
   delay(100);
@@ -528,7 +553,7 @@ void setup() {
     }
   }
 
-  loadSlotsFromNVS();
+  loadSlotsFromStorage();
 
   // Auto-connect or launch setup portal if credentials are missing/wrong
   WiFiManager wm;
