@@ -2,6 +2,7 @@
   "name": "led-cube-designer",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -19,6 +20,6 @@
     "@vitejs/plugin-react": "4.0.0",
     "baseline-browser-mapping": "^2.11.13",
     "vite": "^4.3.9",
-    "vitest": "latest"
+    "vitest": "^3.2.4"
   }
 }

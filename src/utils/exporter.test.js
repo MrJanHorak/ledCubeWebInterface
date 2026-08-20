@@ -46,27 +46,23 @@ describe('ESP32 sketch generators', () => {
     expect(out).toContain('Serial2.begin(38400, SERIAL_8N1, 16, 17);');
   });
 
-  it('generates valid ESP32 Wi-Fi relay sketch (AP mode by default)', () => {
+  it('generates a Wi-Fi relay sketch using WiFiManager captive-portal setup (no hardcoded credentials)', () => {
     const out = generateESP32WiFiRelaySketch();
     expect(out).toContain('#include <WiFi.h>');
+    expect(out).toContain('#include <WiFiManager.h>');
     expect(out).toContain('#include <WebSocketsServer.h>');
-    expect(out).toContain('WebSocketsServer webSocket = WebSocketsServer(81);');
-    expect(out).toContain('WiFi.softAP(ssid, password);');
-    expect(out).not.toContain('WiFi.mode(WIFI_STA)');
+    expect(out).toContain('#include <ESPmDNS.h>');
+    expect(out).toContain('WebSocketsServer webSocket(81);');
+    // No SSID/password baked into the sketch -- WiFiManager prompts for
+    // credentials via a captive portal on first boot instead.
+    expect(out).not.toContain('const char* ssid');
+    expect(out).not.toContain('const char* password');
   });
 
-  it('generates a Wi-Fi relay sketch that joins an existing network in STA mode', () => {
-    const out = generateESP32WiFiRelaySketch({
-      mode: 'sta',
-      ssid: 'MyHomeNetwork',
-      password: 'hunter2',
-    });
-    expect(out).toContain('WiFi.mode(WIFI_STA)');
-    expect(out).toContain('WiFi.begin(ssid, password)');
-    expect(out).toContain('const char* ssid = "MyHomeNetwork";');
-    expect(out).toContain('const char* password = "hunter2";');
-    expect(out).toContain('Serial.println(WiFi.localIP());');
-    expect(out).not.toContain('WiFi.softAP');
+  it('resolves via mDNS at ledcube.local instead of a fixed AP IP', () => {
+    const out = generateESP32WiFiRelaySketch();
+    expect(out).toContain('MDNS_HOSTNAME "ledcube"');
+    expect(out).toContain('ledcube.local');
   });
 
   it('generates a wiring & troubleshooting guide covering the two known gotchas', () => {
@@ -208,14 +204,15 @@ describe('lowercase and cursive font support', () => {
 });
 
 describe('generateESP32WebAppSketch', () => {
-  it('serves the built site from LittleFS and runs the WebSocket relay', () => {
+  it('serves the built site from LittleFS, runs the WebSocket relay, and uses WiFiManager', () => {
     const out = generateESP32WebAppSketch();
     expect(out).toContain('#include <LittleFS.h>');
     expect(out).toContain('#include <ESPAsyncWebServer.h>');
+    expect(out).toContain('#include <WiFiManager.h>');
     expect(out).toContain('LittleFS.begin(true)');
-    expect(out).toContain('server.serveStatic("/", LittleFS, "/")');
     expect(out).toContain('WebSocketsServer webSocket(81);');
-    expect(out).toContain('WiFi.softAP(ssid, password);');
+    // No hardcoded credentials -- set up via captive portal on first boot
+    expect(out).not.toContain('const char* ssid');
   });
 
   it('sends the 0xAD open-communication handshake once at boot', () => {
@@ -228,14 +225,9 @@ describe('generateESP32WebAppSketch', () => {
     expect(setupBody).toMatch(/for\s*\(.*i.*<\s*70.*\)\s*Serial2\.write\(0xAD\);/);
   });
 
-  it('supports STA mode and prints the assigned IP', () => {
-    const out = generateESP32WebAppSketch({
-      mode: 'sta',
-      ssid: 'MyHomeNetwork',
-      password: 'hunter2',
-    });
-    expect(out).toContain('WiFi.mode(WIFI_STA)');
-    expect(out).toContain('const char* ssid = "MyHomeNetwork";');
-    expect(out).not.toContain('WiFi.softAP');
+  it('supports resetting saved Wi-Fi credentials via a held GPIO0 press', () => {
+    const out = generateESP32WebAppSketch();
+    expect(out).toContain('RESET_PIN     0');
+    expect(out).toContain('wm.resetSettings();');
   });
 });
